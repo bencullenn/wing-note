@@ -1,14 +1,9 @@
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query, Depends
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException,
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from fastapi.middleware.cors import CORSMiddleware
-from deepgram import (
-    DeepgramClient,
-    DeepgramClientOptions,
-    PrerecordedOptions,
-    FileSource,
-)
+from deepgram import DeepgramClient, PrerecordedOptions
 import requests
 from typing import Dict
 import os
