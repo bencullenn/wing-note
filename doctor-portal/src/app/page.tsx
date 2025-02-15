@@ -6,7 +6,7 @@ import { API_URL } from "../../config";
 
 interface Visit {
   id: number;
-  first_name: string;
+  patient: { first_name: string };
   created_at: string;
 }
 
@@ -16,12 +16,23 @@ export default function Home() {
   async function fetchVisits() {
     const response = await fetch(API_URL + "/visits");
     const data = await response.json();
+    console.log("Data: ", data);
     setVisit(data);
   }
 
   useEffect(() => {
     fetchVisits();
   }, []);
+
+  function formatDate(dateString: string) {
+    return new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(dateString));
+  }
 
   return (
     <div>
@@ -31,7 +42,7 @@ export default function Home() {
           <li key={visit.id} className="bg-white shadow rounded-lg p-4">
             <div className="flex justify-between items-center">
               <span className="text-lg">
-                {visit.first_name} - {visit.created_at}
+                {visit.patient.first_name} - {formatDate(visit.created_at)}
               </span>
               <Link href={`/visit/${visit.id}`}>
                 <Button variant="outline">View EHR</Button>
