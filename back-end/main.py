@@ -41,8 +41,27 @@ def get_visits():
 # Get visit for patient by id
 @app.get("/visits/{id}")
 def get_visit_by_id(id: int):
-    visits = supabase.table("visit").select("*").eq("id", id).execute()
-    return visits
+    visits = (
+        supabase.table("visit")
+        .select(
+            "id, patient(mrn, first_name, last_name, age, gender), doctor(first_name, last_name), created_at, hpi, pmh, cc, meds, allergies, ros, vitals, findings, diagnosis, plan, interventions, eval, discharge, approved"
+        )
+        .eq("id", id)
+        .execute()
+    )
+
+    visit_data = visits.data[0]
+
+    # Flatten the patient and doctor info into the visit data
+    visit_data["patient_first_name"] = visit_data["patient"]["first_name"]
+    visit_data["patient_last_name"] = visit_data["patient"]["last_name"]
+    visit_data["patient_age"] = visit_data["patient"]["age"]
+    visit_data["patient_gender"] = visit_data["patient"]["gender"]
+    visit_data["patient_mrn"] = visit_data["patient"]["mrn"]
+    visit_data["doctor_first_name"] = visit_data["doctor"]["first_name"]
+    visit_data["doctor_last_name"] = visit_data["doctor"]["last_name"]
+
+    return visit_data
 
 
 # Approve visit record by id

@@ -8,22 +8,28 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { API_URL } from "../../config";
 
 const ehrCategories = [
   {
     title: "Patient Information",
     fields: [
-      { name: "name", label: "Name", type: "input" },
-      { name: "age", label: "Age", type: "input" },
-      { name: "gender", label: "Gender", type: "input" },
-      { name: "mrn", label: "Medical Record Number (MRN)", type: "input" },
+      { name: "patient_first_name", label: "First Name", type: "input" },
+      { name: "patient_last_name", label: "Last Name", type: "input" },
+      { name: "patient_age", label: "Age", type: "input" },
+      { name: "patient_gender", label: "Gender", type: "input" },
+      {
+        name: "patient_mrn",
+        label: "Medical Record Number (MRN)",
+        type: "input",
+      },
     ],
   },
   {
     title: "Chief Complaint",
     fields: [
       {
-        name: "chiefComplaint",
+        name: "cc",
         label: "Primary issue or reason for visit",
         type: "textarea",
       },
@@ -43,7 +49,7 @@ const ehrCategories = [
     title: "Past Medical History",
     fields: [
       {
-        name: "pastMedicalHistory",
+        name: "pmh",
         label: "Previous diagnoses, surgeries, hospitalizations, etc.",
         type: "textarea",
       },
@@ -53,7 +59,7 @@ const ehrCategories = [
     title: "Medications",
     fields: [
       {
-        name: "medications",
+        name: "meds",
         label: "Current medications, dosage, and frequency",
         type: "textarea",
       },
@@ -82,9 +88,9 @@ const ehrCategories = [
   {
     title: "Physical Assessment",
     fields: [
-      { name: "vitalSigns", label: "Vital signs", type: "textarea" },
+      { name: "vitals", label: "Vital signs", type: "textarea" },
       {
-        name: "physicalAssessment",
+        name: "findings",
         label: "Head-to-toe assessment findings",
         type: "textarea",
       },
@@ -94,7 +100,7 @@ const ehrCategories = [
     title: "Nursing Diagnoses",
     fields: [
       {
-        name: "nursingDiagnoses",
+        name: "diagnosis",
         label: "Clinical judgments about patient's responses",
         type: "textarea",
       },
@@ -104,7 +110,7 @@ const ehrCategories = [
     title: "Plan of Care",
     fields: [
       {
-        name: "planOfCare",
+        name: "plan",
         label: "Interventions planned to address nursing diagnoses",
         type: "textarea",
       },
@@ -124,7 +130,7 @@ const ehrCategories = [
     title: "Evaluation",
     fields: [
       {
-        name: "evaluation",
+        name: "eval",
         label: "Assessment of patient's response to interventions",
         type: "textarea",
       },
@@ -134,7 +140,7 @@ const ehrCategories = [
     title: "Discharge Planning",
     fields: [
       {
-        name: "dischargePlanning",
+        name: "discharge",
         label: "Plans for patient's discharge",
         type: "textarea",
       },
@@ -142,35 +148,20 @@ const ehrCategories = [
   },
 ];
 
-// Mock API call - replace with actual API call
-const fetchVisitData = async (visitId: number) => {
-  // Simulating API delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  return {
-    name: "John Doe",
-    age: "35",
-    gender: "Male",
-    mrn: "MRN12345",
-    chiefComplaint: "",
-    hpi: "",
-    pastMedicalHistory: "",
-    medications: "",
-    allergies: "",
-    ros: "",
-    vitalSigns: "",
-    physicalAssessment: "",
-    nursingDiagnoses: "",
-    planOfCare: "",
-    interventions: "",
-    evaluation: "",
-    dischargePlanning: "",
-  };
-};
-
 export function EHRForm({ visitId: visitId }: { visitId: number }) {
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Mock API call - replace with actual API call
+  async function fetchVisitData(visit_id: number) {
+    const response = await fetch(
+      API_URL + `/visits/${visit_id}?id=${visit_id}`
+    );
+    const data = await response.json();
+    console.log("Data: ", data);
+    return data;
+  }
 
   useEffect(() => {
     const loadVisitData = async () => {
