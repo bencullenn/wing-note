@@ -12,8 +12,9 @@ import asyncio
 import subprocess
 import os
 import wave
-from io import BytesIO
+import struct
 
+from io import BytesIO
 from datetime import datetime
 
 load_dotenv()
@@ -45,7 +46,6 @@ SAMPLE_WIDTH = 2  # 16-bit audio
 
 audio_buffer = BytesIO()  # will hold a valid WAV-file stream
 video_buffer = BytesIO()  # will hold raw video packets (e.g. h264)
-expecting_audio = False  # toggles packet type with each received message
 wav_file = wave.open(audio_buffer, "wb")
 wav_file.setnchannels(CHANNELS)
 wav_file.setsampwidth(SAMPLE_WIDTH)
@@ -53,25 +53,29 @@ wav_file.setframerate(SAMPLE_RATE)
 
 buffer_lock = asyncio.Lock()
 
+HEADER_FORMAT = "!B"  # 1 byte for type,
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    global expecting_audio, wav_file, audio_buffer, video_buffer
+    global wav_file, audio_buffer, video_buffer
     await websocket.accept()
     print("WebSocket connection established.")
     try:
         while True:
+            header = await websocket.receive_bytes()
+
+            # Read the header to see if it's 0x01 (audio) or 0x02 (video)
+            packet_type = struct.unpack(HEADER_FORMAT, header)
+
             data = await websocket.receive_bytes()
-            # Protect buffer writes while a badge-scan might be chopping the data.
             async with buffer_lock:
-                if expecting_audio:
-                    # Write the audio data (raw PCM) into the WAV file
+                if packet_type[0] == 0x01:
                     wav_file.writeframes(data)
                 else:
-                    # Write the video data into the video buffer
                     video_buffer.write(data)
-                # Alternate between audio and video for each packet
-                expecting_audio = not expecting_audio
+
     except Exception as e:
         print(f"WebSocket connection error: {e}")
     finally:
@@ -84,7 +88,7 @@ async def websocket_endpoint(websocket: WebSocket):
         print("WebSocket connection closed.")
 
 
-@app.post("/badge-scan/{badge}")
+@app.get("/badge-scan/{badge}")
 async def badge_scan(badge: int):
     global audio_buffer, video_buffer, wav_file, expecting_audio
     # Get a timestamp – used for filenames
