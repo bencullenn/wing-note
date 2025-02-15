@@ -148,3 +148,27 @@ def process_video(video_path: str):
     print("Processing video", video_path)
     # Process video here
     return {"message": "Video processed"}
+
+
+## Patient Portal
+@app.get("/patient-visits")
+def get_patient_visits(patient_id: int):
+    visits = (
+        supabase.table("visit")
+        .select("id, doctor(first_name, last_name), created_at")
+        .eq("patient", patient_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return visits.data
+
+
+@app.get("/patient/{patient_mrn}")
+def get_patient(patient_mrn: int):
+    patient = (
+        supabase.table("patient")
+        .select("mrn, first_name, last_name, age, gender")
+        .eq("mrn", patient_mrn)
+        .execute()
+    )
+    return patient.data[0]
