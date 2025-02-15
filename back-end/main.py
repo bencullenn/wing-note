@@ -2,8 +2,6 @@ from fastapi import FastAPI
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
-import vertexai
-from vertexai.generative_models import GenerativeModel, Part
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
