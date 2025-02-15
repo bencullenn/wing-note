@@ -155,9 +155,7 @@ export function EHRForm({ visitId: visitId }: { visitId: number }) {
 
   // Mock API call - replace with actual API call
   async function fetchVisitData(visit_id: number) {
-    const response = await fetch(
-      API_URL + `/visits/${visit_id}?id=${visit_id}`
-    );
+    const response = await fetch(API_URL + `/visits/${visit_id}`);
     const data = await response.json();
     console.log("Data: ", data);
     return data;
@@ -187,18 +185,35 @@ export function EHRForm({ visitId: visitId }: { visitId: number }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSaving(true);
+
+    const formDataObj = new FormData();
+    formDataObj.append("visit_id", visitId.toString());
+    formDataObj.append("patient_first_name", formData.patient_first_name);
+    formDataObj.append("patient_last_name", formData.patient_last_name);
+    formDataObj.append("patient_age", formData.patient_age);
+    formDataObj.append("patient_gender", formData.patient_gender);
+    formDataObj.append("patient_mrn", formData.patient_mrn);
+    formDataObj.append("cc", formData.cc || "");
+    formDataObj.append("hpi", formData.hpi || "");
+    formDataObj.append("pmh", formData.pmh || "");
+    formDataObj.append("meds", formData.meds || "");
+    formDataObj.append("allergies", formData.allergies || "");
+    formDataObj.append("ros", formData.ros || "");
+    formDataObj.append("vitals", formData.vitals || "");
+    formDataObj.append("findings", formData.findings || "");
+    formDataObj.append("diagnosis", formData.diagnosis || "");
+    formDataObj.append("plan", formData.plan || "");
+    formDataObj.append("interventions", formData.interventions || "");
+    formDataObj.append("eval", formData.eval || "");
+    formDataObj.append("discharge", formData.discharge || "");
+
     try {
-      // Call your backend API to save the form data
-      const response = await fetch(API_URL + `/visits/${visitId}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
+      const response = await fetch(API_URL + `/visits`, {
+        method: "POST",
+        body: formDataObj,
       });
     } catch (error) {
       console.error("Error saving visit data:", error);
-      // Handle error (e.g., show error message to user)
     } finally {
       setIsSaving(false);
     }
