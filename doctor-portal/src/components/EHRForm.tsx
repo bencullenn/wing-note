@@ -143,7 +143,7 @@ const ehrCategories = [
 ];
 
 // Mock API call - replace with actual API call
-const fetchPatientData = async (patientId: number) => {
+const fetchVisitData = async (visitId: number) => {
   // Simulating API delay
   await new Promise((resolve) => setTimeout(resolve, 1000));
   return {
@@ -163,32 +163,31 @@ const fetchPatientData = async (patientId: number) => {
     planOfCare: "",
     interventions: "",
     evaluation: "",
-    patientEducation: "",
     dischargePlanning: "",
   };
 };
 
-export function EHRForm({ patientId }: { patientId: number }) {
+export function EHRForm({ visitId: visitId }: { visitId: number }) {
   const [formData, setFormData] = useState<Record<string, string>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    const loadPatientData = async () => {
+    const loadVisitData = async () => {
       setIsLoading(true);
       try {
-        const data = await fetchPatientData(patientId);
+        const data = await fetchVisitData(visitId);
         setFormData(data);
       } catch (error) {
-        console.error("Error fetching patient data:", error);
+        console.error("Error fetching visit data:", error);
         // Handle error (e.g., show error message to user)
       } finally {
         setIsLoading(false);
       }
     };
 
-    loadPatientData();
-  }, [patientId]);
+    loadVisitData();
+  }, [visitId]);
 
   const handleInputChange = (name: string, value: string) => {
     setFormData((prev) => ({ ...prev, [name]: value }));
@@ -204,7 +203,7 @@ export function EHRForm({ patientId }: { patientId: number }) {
       // Here you would typically send the data to your backend
       // If successful, you might want to show a success message or redirect
     } catch (error) {
-      console.error("Error saving patient data:", error);
+      console.error("Error saving visit data:", error);
       // Handle error (e.g., show error message to user)
     } finally {
       setIsSaving(false);
@@ -214,7 +213,7 @@ export function EHRForm({ patientId }: { patientId: number }) {
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
-        Loading patient data...
+        Loading visit data...
       </div>
     );
   }

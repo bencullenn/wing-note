@@ -15,7 +15,10 @@ supabase: Client = create_client(url, key)
 # Get all visits
 @app.get("/visits")
 def get_visits():
-    visits = supabase.table("visits").select("*").execute()
+    visits = (
+        supabase.table("visits").select("id, patient(first_name), created_at").execute()
+    )
+    print("visits", visits)
     return visits
 
 
