@@ -1,13 +1,13 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { useState, useEffect } from "react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const ehrCategories = [
   {
@@ -21,67 +21,131 @@ const ehrCategories = [
   },
   {
     title: "Chief Complaint",
-    fields: [{ name: "chiefComplaint", label: "Primary issue or reason for visit", type: "textarea" }],
+    fields: [
+      {
+        name: "chiefComplaint",
+        label: "Primary issue or reason for visit",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "History of Present Illness (HPI)",
-    fields: [{ name: "hpi", label: "Detailed description of current condition", type: "textarea" }],
+    fields: [
+      {
+        name: "hpi",
+        label: "Detailed description of current condition",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Past Medical History",
     fields: [
-      { name: "pastMedicalHistory", label: "Previous diagnoses, surgeries, hospitalizations, etc.", type: "textarea" },
+      {
+        name: "pastMedicalHistory",
+        label: "Previous diagnoses, surgeries, hospitalizations, etc.",
+        type: "textarea",
+      },
     ],
   },
   {
     title: "Medications",
-    fields: [{ name: "medications", label: "Current medications, dosage, and frequency", type: "textarea" }],
+    fields: [
+      {
+        name: "medications",
+        label: "Current medications, dosage, and frequency",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Allergies",
-    fields: [{ name: "allergies", label: "Documented allergies and reactions", type: "textarea" }],
+    fields: [
+      {
+        name: "allergies",
+        label: "Documented allergies and reactions",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Review of Systems (ROS)",
-    fields: [{ name: "ros", label: "Systematic review of each body system", type: "textarea" }],
+    fields: [
+      {
+        name: "ros",
+        label: "Systematic review of each body system",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Physical Assessment",
     fields: [
       { name: "vitalSigns", label: "Vital signs", type: "textarea" },
-      { name: "physicalAssessment", label: "Head-to-toe assessment findings", type: "textarea" },
+      {
+        name: "physicalAssessment",
+        label: "Head-to-toe assessment findings",
+        type: "textarea",
+      },
     ],
   },
   {
     title: "Nursing Diagnoses",
-    fields: [{ name: "nursingDiagnoses", label: "Clinical judgments about patient's responses", type: "textarea" }],
+    fields: [
+      {
+        name: "nursingDiagnoses",
+        label: "Clinical judgments about patient's responses",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Plan of Care",
-    fields: [{ name: "planOfCare", label: "Interventions planned to address nursing diagnoses", type: "textarea" }],
+    fields: [
+      {
+        name: "planOfCare",
+        label: "Interventions planned to address nursing diagnoses",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Interventions",
-    fields: [{ name: "interventions", label: "Actions taken by the nurse", type: "textarea" }],
+    fields: [
+      {
+        name: "interventions",
+        label: "Actions taken by the nurse",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Evaluation",
-    fields: [{ name: "evaluation", label: "Assessment of patient's response to interventions", type: "textarea" }],
-  },
-  {
-    title: "Patient Education",
-    fields: [{ name: "patientEducation", label: "Information provided to the patient", type: "textarea" }],
+    fields: [
+      {
+        name: "evaluation",
+        label: "Assessment of patient's response to interventions",
+        type: "textarea",
+      },
+    ],
   },
   {
     title: "Discharge Planning",
-    fields: [{ name: "dischargePlanning", label: "Plans for patient's discharge", type: "textarea" }],
+    fields: [
+      {
+        name: "dischargePlanning",
+        label: "Plans for patient's discharge",
+        type: "textarea",
+      },
+    ],
   },
-]
+];
 
 // Mock API call - replace with actual API call
 const fetchPatientData = async (patientId: number) => {
   // Simulating API delay
-  await new Promise((resolve) => setTimeout(resolve, 1000))
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   return {
     name: "John Doe",
     age: "35",
@@ -101,54 +165,58 @@ const fetchPatientData = async (patientId: number) => {
     evaluation: "",
     patientEducation: "",
     dischargePlanning: "",
-  }
-}
+  };
+};
 
 export function EHRForm({ patientId }: { patientId: number }) {
-  const [formData, setFormData] = useState<Record<string, string>>({})
-  const [isLoading, setIsLoading] = useState(true)
-  const [isSaving, setIsSaving] = useState(false)
+  const [formData, setFormData] = useState<Record<string, string>>({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     const loadPatientData = async () => {
-      setIsLoading(true)
+      setIsLoading(true);
       try {
-        const data = await fetchPatientData(patientId)
-        setFormData(data)
+        const data = await fetchPatientData(patientId);
+        setFormData(data);
       } catch (error) {
-        console.error("Error fetching patient data:", error)
+        console.error("Error fetching patient data:", error);
         // Handle error (e.g., show error message to user)
       } finally {
-        setIsLoading(false)
+        setIsLoading(false);
       }
-    }
+    };
 
-    loadPatientData()
-  }, [patientId])
+    loadPatientData();
+  }, [patientId]);
 
   const handleInputChange = (name: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [name]: value }))
-  }
+    setFormData((prev) => ({ ...prev, [name]: value }));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsSaving(true)
+    e.preventDefault();
+    setIsSaving(true);
     try {
       // Simulating API call to save data
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      console.log("Form approved and saved:", formData)
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      console.log("Form approved and saved:", formData);
       // Here you would typically send the data to your backend
       // If successful, you might want to show a success message or redirect
     } catch (error) {
-      console.error("Error saving patient data:", error)
+      console.error("Error saving patient data:", error);
       // Handle error (e.g., show error message to user)
     } finally {
-      setIsSaving(false)
+      setIsSaving(false);
     }
-  }
+  };
 
   if (isLoading) {
-    return <div className="flex justify-center items-center h-64">Loading patient data...</div>
+    return (
+      <div className="flex justify-center items-center h-64">
+        Loading patient data...
+      </div>
+    );
   }
 
   return (
@@ -166,14 +234,18 @@ export function EHRForm({ patientId }: { patientId: number }) {
                   <Textarea
                     id={field.name}
                     value={formData[field.name] || ""}
-                    onChange={(e) => handleInputChange(field.name, e.target.value)}
+                    onChange={(e) =>
+                      handleInputChange(field.name, e.target.value)
+                    }
                     className="w-full"
                   />
                 ) : (
                   <Input
                     id={field.name}
                     value={formData[field.name] || ""}
-                    onChange={(e) => handleInputChange(field.name, e.target.value)}
+                    onChange={(e) =>
+                      handleInputChange(field.name, e.target.value)
+                    }
                     className="w-full"
                   />
                 )}
@@ -187,6 +259,5 @@ export function EHRForm({ patientId }: { patientId: number }) {
         {isSaving ? "Saving..." : "Approve and Save"}
       </Button>
     </form>
-  )
+  );
 }
-
