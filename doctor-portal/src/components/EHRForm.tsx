@@ -188,11 +188,14 @@ export function EHRForm({ visitId: visitId }: { visitId: number }) {
     e.preventDefault();
     setIsSaving(true);
     try {
-      // Simulating API call to save data
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      console.log("Form approved and saved:", formData);
-      // Here you would typically send the data to your backend
-      // If successful, you might want to show a success message or redirect
+      // Call your backend API to save the form data
+      const response = await fetch(API_URL + `/visits/${visitId}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(formData),
+      });
     } catch (error) {
       console.error("Error saving visit data:", error);
       // Handle error (e.g., show error message to user)

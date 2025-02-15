@@ -68,7 +68,8 @@ def get_visit_by_id(id: int):
 @app.put("/visits/{visit_id}")
 def approve_visit(visit_id: int):
     visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
-    if visit["approved"] is False:
+    print("visit", visit)
+    if visit.data[0]["approved"] is False:
         updated_visit = (
             supabase.table("visit")
             .update({"approved": True})
