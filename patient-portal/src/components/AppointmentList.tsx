@@ -50,9 +50,16 @@ export default function AppointmentList() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Any</SelectItem>
-            <SelectItem value="general">General Exam</SelectItem>
-            <SelectItem value="specialist">Specialist Consultation</SelectItem>
-            <SelectItem value="dental">Dentist</SelectItem>
+            <SelectItem value="emergency-room">Emergency Room</SelectItem>
+            <SelectItem value="hospital-stay">Hospital Stay</SelectItem>
+            <SelectItem value="surgery-procedures">
+              Surgery and Procedures
+            </SelectItem>
+            <SelectItem value="maternity-newborn">
+              Maternity and Newborn Care
+            </SelectItem>
+            <SelectItem value="specialist">Specialist Care</SelectItem>
+            <SelectItem value="intensive">Intensive Care</SelectItem>
           </SelectContent>
         </Select>
       </div>

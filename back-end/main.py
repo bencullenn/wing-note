@@ -22,11 +22,21 @@ from deepgram import (
     FileSource,
 )
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query, Depends, WebSocket
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    UploadFile,
+    HTTPException,
+    Query,
+    Depends,
+    WebSocket,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from google.generativeai import GenerativeModel
 from PIL import Image
 from supabase import create_client, Client
+from google.genai.types import HttpOptions, Part
 
 load_dotenv()
 
@@ -41,7 +51,8 @@ deepgram_client = DeepgramClient(deepgram_key)
 
 google_api_key = os.environ.get("GOOGLE_API_KEY")
 genai.configure(api_key=google_api_key)
-model = GenerativeModel('gemini-pro-vision')
+
+doctor_id = 1
 
 perplexity_api_key = os.environ.get("PERPLEXITY_API_KEY")
 
@@ -107,7 +118,15 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.get("/badge-scan/{badge}")
 async def badge_scan(badge: int):
-    global audio_buffer, video_buffer, wav_file, expecting_audio
+    global doctor_id, audio_buffer, video_buffer, wav_file, expecting_audio
+
+    patient_id = (
+        supabase.table("patient")
+        .select("id")
+        .eq("wristband_id", badge)
+        .execute()
+        .data[0]["id"]
+    )
     # Get a timestamp – used for filenames
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
@@ -133,51 +152,87 @@ async def badge_scan(badge: int):
         wav_file.setsampwidth(SAMPLE_WIDTH)
         wav_file.setframerate(SAMPLE_RATE)
 
-    # Write the captured buffers out to temporary files.
-    audio_temp = f"audio_{ts}.wav"
-    video_temp = f"video_{ts}.h264"  # assuming the video data is in H.264 format
+    # Save the audio to Supabase
+    audio_file_path = "audio" + ts
+    supabase.storage.from_("audio").upload(
+        audio_file_path, old_audio_bytes, file_options={"content-type": "audio/wav"}
+    )
 
-    with open(audio_temp, "wb") as af:
-        af.write(old_audio_bytes)
-    with open(video_temp, "wb") as vf:
-        vf.write(old_video_bytes)
-
-    # Define the name of the output MP4 file.
-    output_filename = f"output_{ts}.mp4"
-
-    # Build and run the ffmpeg command.
-    # Here we assume that:
-    # -  The video data is already encoded and can be 'copied' into an MP4 container.
-    # -  The audio from the WAV file will be encoded as AAC.
-    ffmpeg_cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        video_temp,  # video input
-        "-i",
-        audio_temp,  # audio input
-        "-c:v",
-        "copy",  # copy the video stream without re-encoding
-        "-c:a",
-        "aac",  # encode audio as AAC
-        output_filename,
+    # Get the file from supabase
+    audio_url = supabase.storage.from_("audio").create_signed_url(audio_file_path, 300)[
+        "signedURL"
     ]
 
+    print("Signed URL", url)
+    AUDIO_URL = {
+        "url": audio_url,
+    }
+
+    ## STEP 2 Call the transcribe_url method on the prerecorded class
+    options: PrerecordedOptions = PrerecordedOptions(
+        model="nova-3",
+        smart_format=True,
+        diarize=True,
+    )
+
+    transcription = deepgram_client.listen.rest.v("1").transcribe_url(
+        AUDIO_URL, options
+    )
+
+    raw_audio_text = (
+        transcription.results.channels[0].alternatives[0].paragraphs.transcript
+    )
+
+    # Save the video to Supabase
+    video_file_path = "video" + ts
+    supabase.storage.from_("video").upload(
+        video_file_path, old_video_bytes, file_options={"content-type": "video/mp4"}
+    )
+
+    video_url = supabase.storage.from_("video").create_signed_url(audio_file_path, 300)[
+        "signedURL"
+    ]
+
+    # Get visual assessment
+    visual_result = await process_video(video_url)
+    visual_assessment = visual_result["visual_assessment"]
+
+    # Process combined information
     try:
-        subprocess.run(ffmpeg_cmd, check=True)
-        print(f"MP4 file created: {output_filename}")
-    except subprocess.CalledProcessError as e:
-        print(f"Error during ffmpeg execution: {e}")
-        return {"error": "Failed to generate MP4 file."}
+        structured_data = parse_medical_text(raw_audio_text, visual_assessment)
+    except Exception as e:
+        print(f"LLM processing error: {e}")
+        structured_data = {
+            "cc": "",
+            "hpi": "",
+            "pmh": "",
+            "meds": "",
+            "allergies": "",
+            "ros": "",
+            "vitals": "",
+            "findings": "",
+            "diagnosis": "",
+            "plan": "",
+            "interventions": "",
+            "eval": "",
+            "discharge": "",
+        }
 
-    # Clean up the temporary files.
-    """try:
-        os.remove(audio_temp)
-        os.remove(video_temp)
-    except Exception as cleanup_error:
-        print(f"Cleanup error: {cleanup_error}")"""
+    # Save to database
+    visit_data = {
+        "patient": patient_id,
+        "doctor": doctor_id,
+        "audio_path": audio_file_path,
+        "video_path": video_file_path,
+        "raw_text": raw_audio_text,
+        "visual_assessment": visual_assessment,
+        **structured_data,
+        "approved": False,
+    }
+    # Save to database
+    visit = supabase.table("visit").insert(visit_data).execute()
 
-    return {"badge": badge, "output_file": output_filename, "timestamp": ts}
+    return visit
 
 
 # Approve visit record by id
@@ -233,89 +288,42 @@ def approve_visit(
     else:
         return {"message": "Visit is already approved"}
 
+
 # Add a new endpoint to get questions for a specific visit
 @app.get("/visits/{visit_id}/questions")
 async def get_visit_questions(visit_id: int):
     # Get visit data from database
     visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
-    
+
     if not visit.data:
         raise HTTPException(status_code=404, detail="Visit not found")
-        
+
     questions = await generate_visit_questions(visit.data[0])
     return {"questions": questions}
 
-@app.post("/audio")
-async def upload_audio(
+
+@app.post("/test")
+async def upload_audio_video(
     patient_id: int = Form(...),
     doctor_id: int = Form(...),
-    file: UploadFile = File(...),
+    audio_file: UploadFile = File(...),
     video_file: UploadFile = File(...),
 ):
     try:
-        # Read and upload audio file
-        file_bytes = await file.read()
+        # Read the audio file and save in the audio buffer
+        file_bytes = await audio_file.read()
         if file_bytes is None:
             raise HTTPException(status_code=400, detail="Invalid audio file")
+        audio_buffer.write(file_bytes)
 
-        file_path = file.filename + datetime.now().strftime("%Y%m%d%H%M%S")
-        response = supabase.storage.from_("recordings").upload(
-            file_path, file_bytes, file_options={"content-type": file.content_type}
-        )
-
-        # Get transcription
-        transcription = await process_audio(file_path)
-        raw_text = transcription.results.channels[0].alternatives[0].paragraphs.transcript
-        
-        # Process video
-        video_path = video_file.filename + datetime.now().strftime("%Y%m%d%H%M%S")
+        # Read the video file and save in the video buffer
         video_bytes = await video_file.read()
-        supabase.storage.from_("recordings").upload(
-            video_path, video_bytes, file_options={"content-type": video_file.content_type}
-        )
-        # Get visual assessment
-        visual_result = await process_video(video_path)
-        visual_assessment = visual_result["visual_assessment"]
-        
-        # Process combined information
-        try:
-            structured_data = parse_medical_text(raw_text, visual_assessment)
-        except Exception as e:
-            print(f"LLM processing error: {e}")
-            structured_data = {
-                "cc": "",
-                "hpi": "",
-                "pmh": "",
-                "meds": "",
-                "allergies": "",
-                "ros": "",
-                "vitals": "",
-                "findings": "",
-                "diagnosis": "",
-                "plan": "",
-                "interventions": "",
-                "eval": "",
-                "discharge": "",
-            }
-
-        # Save to database
-        visit_data = {
-            "patient": patient_id,
-            "doctor": doctor_id,
-            "audio_path": file_path,
-            "video_path": video_path,
-            "raw_text": raw_text,
-            "visual_assessment": visual_assessment,
-            **structured_data,
-            "approved": False
-        }
-        # Save to database
-        visit = supabase.table("visit").insert(visit_data).execute()
-
-        return visit
+        if video_bytes is None:
+            raise HTTPException(status_code=400, detail="Invalid video file")
+        video_buffer.write(video_bytes)
 
     except Exception as e:
-        print(f"Error in upload_audio: {e}")
+        print(f"Error in upload_audio_video: {e}")
         raise HTTPException(
             status_code=500, detail=f"Error processing audio upload: {str(e)}"
         )
@@ -332,34 +340,6 @@ async def process_medical_text(raw_text: str):
         return structured_data
     except Exception as e:
         return {"error": f"Error processing text: {str(e)}"}
-
-
-# Create an endpoint to process a video
-async def process_audio(audio_path: str):
-    # Get the file from supabase
-    url = supabase.storage.from_("recordings").create_signed_url(audio_path, 300)[
-        "signedURL"
-    ]
-    print("Signed URL", url)
-    AUDIO_URL = {
-        "url": url,
-    }
-
-    ## STEP 2 Call the transcribe_url method on the prerecorded class
-    options: PrerecordedOptions = PrerecordedOptions(
-        model="nova-3",
-        smart_format=True,
-        diarize=True,
-    )
-    response = deepgram_client.listen.rest.v("1").transcribe_url(AUDIO_URL, options)
-    print(f"response: {response}\n\n")
-    return response
-
-
-def process_video(video_path: str):
-    print("Processing video", video_path)
-    # Process video here
-    return {"message": "Video processed"}
 
 
 ## Patient Portal
@@ -458,6 +438,7 @@ def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
     - interventions: Document both verbal and physically demonstrated procedures
     - eval (Evaluation): Comprehensive assessment using both verbal and visual clinical data
     - discharge: Combine verbal instructions with any demonstrated procedures/exercises
+    - type: This represents the type of medical visit. The only options are 'emergency-room', 'hospital-stay', 'surgery-procedures', 'maternity-newborn', 'specialist', 'intensive'. Choose the one that best fits the visit.
 
     Return the response as a valid JSON object with these exact field names.
     """
@@ -471,13 +452,13 @@ def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are an expert medical documentation specialist skilled in integrating verbal and visual clinical information."
+                        "content": "You are an expert medical documentation specialist skilled in integrating verbal and visual clinical information.",
                     },
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": prompt},
                 ],
                 "temperature": 0.1,
-                "response_format": {"type": "json_object"}
-            }
+                "response_format": {"type": "json_object"},
+            },
         )
 
         if response.status_code != 200:
@@ -514,13 +495,14 @@ def validate_structured_data(data: Dict) -> bool:
 
     return all(field in data for field in required_fields)
 
+
 def extract_frames(video_path: str, max_frames: int = 20):
     """Extract frames from video at regular intervals"""
     frames = []
     video = cv2.VideoCapture(video_path)
     total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
     interval = max(1, total_frames // max_frames)
-    
+
     current_frame = 0
     while current_frame < total_frames:
         video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
@@ -532,15 +514,18 @@ def extract_frames(video_path: str, max_frames: int = 20):
             pil_image = Image.fromarray(frame_rgb)
             frames.append(pil_image)
         current_frame += interval
-    
+
     video.release()
     return frames
 
-async def process_video(video_path: str) -> Dict:
+
+async def process_video(video_link: str) -> Dict:
     try:
-        print(f"Processing video: {video_path}")
-        frames = extract_frames(video_path)
-        
+        print(f"Processing video: {video_link}")
+        # frames = extract_frames(video_path)
+
+        # Get the video link
+
         prompt = """You are an expert medical professional specialized in visual clinical assessment. 
         Analyze these frames from a medical consultation and focus ONLY on visual medical information 
         that would complement an audio transcription.
@@ -583,39 +568,43 @@ async def process_video(video_path: str) -> Dict:
         visually observable information that would NOT be captured in audio transcription.
         If certain categories have no observable information, mark them as 'No visible findings'.
         """
-        
-        response = model.generate_content([prompt, *frames])
-        
+
+        client = genai.Client(http_options=HttpOptions(api_version="v1"))
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-001",
+            contents=[
+                prompt,
+                Part.from_uri(
+                    file_uri=video_link,
+                    mime_type="video/mp4",
+                ),
+            ],
+        )
+
         return {
             "status": "success",
             "visual_assessment": response.text,
-            "frames_processed": len(frames)
         }
-    
+
     except Exception as e:
         print(f"Error processing video: {str(e)}")
-        return {
-            "status": "error",
-            "error": str(e)
-        }
+        return {"status": "error", "error": str(e)}
+
 
 @app.get("/generate-questions")
 async def generate_visit_questions(visit_data: dict) -> List[str]:
     """Generate relevant questions based on visit data using Perplexity API"""
-    
+
     api_key = os.getenv("PERPLEXITY_API_KEY")
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
     prompt = f"""As a medical AI assistant, generate 4 relevant and important questions that a patient might ask 
     based on this medical visit information:
     
-    Chief Complaint: {visit_data.get('cc', '')}
-    Diagnosis: {visit_data.get('diagnosis', '')}
-    Treatment Plan: {visit_data.get('plan', '')}
-    Medications: {visit_data.get('meds', '')}
+    Chief Complaint: {visit_data.get("cc", "")}
+    Diagnosis: {visit_data.get("diagnosis", "")}
+    Treatment Plan: {visit_data.get("plan", "")}
+    Medications: {visit_data.get("meds", "")}
     
     Generate questions that:
     1. Focus on understanding the diagnosis
@@ -632,29 +621,26 @@ async def generate_visit_questions(visit_data: dict) -> List[str]:
             json={
                 "model": "pplx-7b-online",
                 "messages": [
-                    {"role": "system", "content": "You are a helpful medical assistant generating patient questions."},
-                    {"role": "user", "content": prompt}
-                ]
-            }
+                    {
+                        "role": "system",
+                        "content": "You are a helpful medical assistant generating patient questions.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            },
         )
-        
+
         if response.status_code == 200:
-            questions = response.json()['choices'][0]['message']['content'].split('\n')
+            questions = response.json()["choices"][0]["message"]["content"].split("\n")
             # Clean and filter questions
-            questions = [q.strip().strip('1234. ') for q in questions if q.strip()]
+            questions = [q.strip().strip("1234. ") for q in questions if q.strip()]
             return questions[:4]  # Ensure we return exactly 4 questions
         else:
             raise Exception(f"API call failed with status {response.status_code}")
-            
+
     except Exception as e:
         print(f"Error generating questions: {e}")
         return []
-
-
-def process_video(video_path: str):
-    print("Processing video", video_path)
-    # Process video here
-    return {"message": "Video processed"}
 
 
 ### Doctor Portal Endpoints

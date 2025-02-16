@@ -193,5 +193,5 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
         </form>
       </CardContent>
     </Card>
-  )
+  );
 }
