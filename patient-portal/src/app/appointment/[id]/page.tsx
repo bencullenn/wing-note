@@ -1,12 +1,11 @@
 import VisitDetails from "@/components/VisitDetails";
-import { ChatComponent } from "@/components/ChatComponent";
 
 export default async function AppointmentPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>; // Type as Promise
 }) {
-  const { id } = await params;
+  const { id } = await params; // Await the Promise
   return (
     <div className="p-4 space-y-6">
       <VisitDetails id={id} />
