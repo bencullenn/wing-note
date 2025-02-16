@@ -130,11 +130,11 @@ async def upload_audio(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Invalid audio file")
 
     # Convert bytes to int16 samples
-    audio_data = np.frombuffer(file_bytes, dtype=np.int16)
+    file_data = np.frombuffer(file_bytes, dtype=np.int16)
 
     # get the timestamp
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    audio_file_path = "audio" + ts + ".wav"
+    audio_file_path = "audio" + ts + ".dat"
 
     # Create WAV file with proper audio settings
     with wave.open(audio_file_path, "w") as wav_file:
@@ -143,7 +143,7 @@ async def upload_audio(file: UploadFile = File(...)):
             SAMPLE_WIDTH
         )  # Using the global SAMPLE_WIDTH (2 bytes per sample)
         wav_file.setframerate(SAMPLE_RATE)  # Using the global SAMPLE_RATE (16000)
-        wav_file.writeframes(audio_data.tobytes())
+        wav_file.writeframes(file_data.tobytes())
 
     audio_file_paths.append(audio_file_path)
     return {"message": "Audio processed successfully", "path": audio_file_path}
@@ -163,7 +163,7 @@ async def upload_video(file: UploadFile = File(...)):
     width, height = 320, 240
     frame_rate = 10  # FPS
     output_folder = f"frames_{ts}"
-    video_file_path = f"video_{ts}.mp4"
+    video_file_path = f"video_{ts}.raw"
 
     # Ensure output folder exists
     if not os.path.exists(output_folder):
@@ -229,13 +229,13 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
         .select("mrn")
         .eq("wristband_id", badge_id)
         .execute()
-        .data[0]["id"]
+        .data[0]["mrn"]
     )
     # Get a timestamp – used for filenames
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    """# First, atomically capture and reset our buffers.
-    async with buffer_lock:
+    # First, atomically capture and reset our buffers.
+    """async with buffer_lock:
         # Finalize the currently open WAV file (which finalizes the header)
         try:
             wav_file.close()
@@ -295,7 +295,7 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
         transcription.results.channels[0].alternatives[0].paragraphs.transcript
     )
 
-    # Read and merge all the video files together
+    """# Read and merge all the video files together
     video_data = []
     for video_file_path in video_file_paths:
         with open(video_file_path, "rb") as f:
@@ -315,7 +315,8 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
 
     # Get visual assessment
     visual_result = await process_video(video_url)
-    visual_assessment = visual_result["visual_assessment"]
+    visual_assessment = visual_result["visual_assessment"]"""
+    visual_assessment = "No visual assessment available"
 
     # Process combined information
     try:
@@ -343,7 +344,7 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
         "patient": patient_id,
         "doctor": doctor_id,
         "audio_path": audio_file_path,
-        "video_path": video_file_path,
+        # "video_path": video_file_path,
         "raw_text": raw_audio_text,
         "visual_assessment": visual_assessment,
         **structured_data,
