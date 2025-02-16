@@ -1,20 +1,27 @@
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query, Depends
+# Standard library imports
+import base64
+import json
 import os
-from supabase import create_client, Client
-from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
+from datetime import datetime
+from typing import Dict, List
+
+# Third party imports
+import cv2
+import google.generativeai as genai
+import numpy as np
+import requests
 from deepgram import (
     DeepgramClient,
     DeepgramClientOptions,
     PrerecordedOptions,
     FileSource,
 )
-import requests
-from typing import Dict
-import os
-import json
-
-from datetime import datetime
+from dotenv import load_dotenv
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from google.generativeai import GenerativeModel
+from PIL import Image
+from supabase import create_client, Client
 
 load_dotenv()
 
@@ -26,6 +33,10 @@ supabase: Client = create_client(url, key)
 
 deepgram_key = os.environ.get("DEEPGRAM_KEY")
 deepgram_client = DeepgramClient(deepgram_key)
+
+google_api_key = os.environ.get("GOOGLE_API_KEY")
+genai.configure(api_key=google_api_key)
+model = GenerativeModel('gemini-pro-vision')
 
 app = FastAPI()
 
@@ -93,12 +104,24 @@ def approve_visit(visit_id: int):
     else:
         return {"message": "Visit is already approved"}
 
+# Add a new endpoint to get questions for a specific visit
+@app.get("/visits/{visit_id}/questions")
+async def get_visit_questions(visit_id: int):
+    # Get visit data from database
+    visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
+    
+    if not visit.data:
+        raise HTTPException(status_code=404, detail="Visit not found")
+        
+    questions = await generate_visit_questions(visit.data[0])
+    return {"questions": questions}
 
 @app.post("/audio")
 async def upload_audio(
     patient_id: int = Form(...),
     doctor_id: int = Form(...),
     file: UploadFile = File(...),
+    video_file: UploadFile = File(...),
 ):
     try:
         # Read and upload audio file
@@ -114,15 +137,22 @@ async def upload_audio(
         # Get transcription
         transcription = await process_audio(file_path)
         raw_text = transcription.results.channels[0].alternatives[0].paragraphs.transcript
-
-        # Process the transcription through Mistral LLM
+        
+        # Process video
+        video_path = video_file.filename + datetime.now().strftime("%Y%m%d%H%M%S")
+        video_bytes = await video_file.read()
+        supabase.storage.from_("recordings").upload(
+            video_path, video_bytes, file_options={"content-type": video_file.content_type}
+        )
+        # Get visual assessment
+        visual_result = await process_video(video_path)
+        visual_assessment = visual_result["visual_assessment"]
+        
+        # Process combined information
         try:
-            structured_data = parse_medical_text(raw_text)
-            if not validate_structured_data(structured_data):
-                raise ValueError("Missing required fields in structured data")
+            structured_data = parse_medical_text(raw_text, visual_assessment)
         except Exception as e:
             print(f"LLM processing error: {e}")
-            # If LLM fails, we'll still save the raw text but with empty structured fields
             structured_data = {
                 "cc": "", "hpi": "", "pmh": "", "meds": "",
                 "allergies": "", "ros": "", "vitals": "",
@@ -130,16 +160,17 @@ async def upload_audio(
                 "interventions": "", "eval": "", "discharge": ""
             }
 
-        # Combine all data for the visit record
+        # Save to database
         visit_data = {
             "patient": patient_id,
             "doctor": doctor_id,
             "audio_path": file_path,
+            "video_path": video_path,
             "raw_text": raw_text,
-            **structured_data,  # Include all structured fields
-            "approved": False  # Default to unapproved
+            "visual_assessment": visual_assessment,
+            **structured_data,
+            "approved": False
         }
-
         # Save to database
         visit = supabase.table("visit").insert(visit_data).execute()
 
@@ -192,9 +223,9 @@ def process_video(video_path: str):
     # Process video here
     return {"message": "Video processed"}
 
-def parse_medical_text(raw_text: str) -> Dict:
+def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
     """
-    Use Mistral AI to parse raw medical text into structured fields
+    Use Mistral AI to parse combined audio and video information into structured fields
     """
     api_key = os.getenv("MISTRAL_API_KEY")
     headers = {
@@ -203,32 +234,37 @@ def parse_medical_text(raw_text: str) -> Dict:
     }
 
     prompt = f"""You are an expert medical doctor with extensive experience in clinical documentation and EHR systems. 
-    Your task is to analyze the following medical text and structure it into a standardized format.
+    Your task is to analyze both the transcribed consultation and visual assessment data to create a comprehensive medical record.
     
-    Please parse the text with high attention to medical accuracy and detail. For each field:
-    - Extract only factual information present in the text
+    Please combine and parse both sources of information with high attention to medical accuracy and detail. For each field:
+    - Extract and combine relevant information from both the audio transcription and visual assessment
     - Use standard medical terminology
     - Maintain clinical relevance
-    - If information for a field is not present, return an empty string
+    - If information for a field is not present in either source, return an empty string
+    - When information appears in both sources, combine them coherently
+    - Prioritize objective visual findings when they complement verbal descriptions
 
-    Parse the following medical text into these specific fields and return ONLY a JSON object:
-    
-    - cc (Chief Complaint): The primary reason for the visit
-    - hpi (History of Present Illness): Detailed chronological description of the current medical problem
-    - pmh (Past Medical History): Previous medical conditions, surgeries, hospitalizations
-    - meds (Current Medications): List all medications with dosages if mentioned
-    - allergies: All mentioned allergies to medications or substances
-    - ros (Review of Systems): Systematic review of body systems
-    - vitals: All vital signs mentioned (BP, HR, RR, Temp, O2 sat, etc.)
-    - findings: Physical examination findings, organized by body system
-    - diagnosis: Primary and secondary diagnoses, using standard medical terminology
-    - plan: Treatment plan, including medications, procedures, and follow-up
-    - interventions: Any procedures or treatments performed during the visit
-    - eval (Evaluation): Assessment of patient's condition and response to treatment
-    - discharge: Discharge instructions and follow-up plans
-
-    Medical Text:
+    Audio Transcription:
     {raw_text}
+
+    Visual Assessment:
+    {visual_assessment}
+
+    Parse the combined information into these specific fields and return ONLY a JSON object:
+    
+    - cc (Chief Complaint): Combine verbal complaint with visible signs of distress or symptoms
+    - hpi (History of Present Illness): Integrate verbal history with observed physical manifestations
+    - pmh (Past Medical History): Include visible evidence of past procedures/conditions with reported history
+    - meds (Current Medications): List medications mentioned and any visible medication use observed
+    - allergies: Combine reported allergies with any visible allergic reactions
+    - ros (Review of Systems): Merge verbal review with visible signs/symptoms
+    - vitals: Combine verbally reported and visually observed/measured vital signs
+    - findings: Integrate verbal and visual physical examination findings, organized by body system
+    - diagnosis: Synthesize diagnoses based on both verbal and visual clinical evidence
+    - plan: Treatment plan incorporating both discussed and demonstrated interventions
+    - interventions: Document both verbal and physically demonstrated procedures
+    - eval (Evaluation): Comprehensive assessment using both verbal and visual clinical data
+    - discharge: Combine verbal instructions with any demonstrated procedures/exercises
 
     Return the response as a valid JSON object with these exact field names.
     """
@@ -238,12 +274,15 @@ def parse_medical_text(raw_text: str) -> Dict:
             "https://api.mistral.ai/v1/chat/completions",
             headers=headers,
             json={
-                "model": "mistral-large-latest",  # or "mistral-medium" for a smaller model
+                "model": "mistral-large-latest",
                 "messages": [
-                    {"role": "system", "content": "You are an expert medical documentation specialist."},
+                    {
+                        "role": "system",
+                        "content": "You are an expert medical documentation specialist skilled in integrating verbal and visual clinical information."
+                    },
                     {"role": "user", "content": prompt}
                 ],
-                "temperature": 0.1,  # Lower temperature for more consistent outputs
+                "temperature": 0.1,
                 "response_format": {"type": "json_object"}
             }
         )
@@ -270,3 +309,138 @@ def validate_structured_data(data: Dict) -> bool:
     ]
     
     return all(field in data for field in required_fields)
+
+def extract_frames(video_path: str, max_frames: int = 20):
+    """Extract frames from video at regular intervals"""
+    frames = []
+    video = cv2.VideoCapture(video_path)
+    total_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+    interval = max(1, total_frames // max_frames)
+    
+    current_frame = 0
+    while current_frame < total_frames:
+        video.set(cv2.CAP_PROP_POS_FRAMES, current_frame)
+        success, frame = video.read()
+        if success:
+            # Convert BGR to RGB
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # Convert to PIL Image
+            pil_image = Image.fromarray(frame_rgb)
+            frames.append(pil_image)
+        current_frame += interval
+    
+    video.release()
+    return frames
+
+async def process_video(video_path: str) -> Dict:
+    try:
+        print(f"Processing video: {video_path}")
+        frames = extract_frames(video_path)
+        
+        prompt = """You are an expert medical professional specialized in visual clinical assessment. 
+        Analyze these frames from a medical consultation and focus ONLY on visual medical information 
+        that would complement an audio transcription.
+
+        Specifically identify and describe:
+
+        1. Physical Examination Findings:
+           - Visible skin conditions, lesions, or rashes
+           - Patient's mobility and gait patterns
+           - Visible swelling or deformities
+           - Facial expressions indicating pain or discomfort
+           - Any medical devices or supports being used
+
+        2. Visual Clinical Signs:
+           - Patient's general appearance and apparent distress level
+           - Visible breathing patterns or respiratory effort
+           - Apparent neurological signs (tremors, asymmetry, etc.)
+           - Color changes (pallor, cyanosis, jaundice)
+           - Visible wounds, bandages, or surgical sites
+
+        3. Demonstrated Physical Assessments:
+           - Range of motion tests performed
+           - Physical manipulation of joints or limbs
+           - Neurological examination maneuvers
+           - Any medical instruments used and their readings
+           - Demonstration of exercises or techniques
+
+        4. Non-verbal Communication:
+           - Patient's body language indicating comfort/discomfort
+           - Physical demonstrations of symptoms by patient
+           - Doctor's demonstrative instructions or examinations
+
+        5. Environmental/Contextual Information:
+           - Medical equipment visible in the room
+           - Use of assistive devices
+           - Any visible medical imaging or test results
+           - Demonstrated use of medical devices
+
+        Format the response as a structured medical observation report, focusing ONLY on 
+        visually observable information that would NOT be captured in audio transcription.
+        If certain categories have no observable information, mark them as 'No visible findings'.
+        """
+        
+        response = model.generate_content([prompt, *frames])
+        
+        return {
+            "status": "success",
+            "visual_assessment": response.text,
+            "frames_processed": len(frames)
+        }
+    
+    except Exception as e:
+        print(f"Error processing video: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e)
+        }
+
+async def generate_visit_questions(visit_data: dict) -> List[str]:
+    """Generate relevant questions based on visit data using Perplexity API"""
+    
+    api_key = os.getenv("PERPLEXITY_API_KEY")
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+    
+    prompt = f"""As a medical AI assistant, generate 4 relevant and important questions that a patient might ask 
+    based on this medical visit information:
+    
+    Chief Complaint: {visit_data.get('cc', '')}
+    Diagnosis: {visit_data.get('diagnosis', '')}
+    Treatment Plan: {visit_data.get('plan', '')}
+    Medications: {visit_data.get('meds', '')}
+    
+    Generate questions that:
+    1. Focus on understanding the diagnosis
+    2. Address treatment plans and medications
+    3. Cover potential side effects or complications
+    4. Include follow-up care instructions
+    
+    Return exactly 4 clear, patient-friendly questions."""
+
+    try:
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers=headers,
+            json={
+                "model": "pplx-7b-online",
+                "messages": [
+                    {"role": "system", "content": "You are a helpful medical assistant generating patient questions."},
+                    {"role": "user", "content": prompt}
+                ]
+            }
+        )
+        
+        if response.status_code == 200:
+            questions = response.json()['choices'][0]['message']['content'].split('\n')
+            # Clean and filter questions
+            questions = [q.strip().strip('1234. ') for q in questions if q.strip()]
+            return questions[:4]  # Ensure we return exactly 4 questions
+        else:
+            raise Exception(f"API call failed with status {response.status_code}")
+            
+    except Exception as e:
+        print(f"Error generating questions: {e}")
+        return []
