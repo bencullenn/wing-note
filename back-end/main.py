@@ -31,6 +31,7 @@ from fastapi import (
     Query,
     Depends,
     WebSocket,
+    Path,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from google.generativeai import GenerativeModel
@@ -68,18 +69,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+audio_file_paths = []
+video_file_paths = []
+
 ### Audio and Video Streaming
 
 SAMPLE_RATE = 16000
 CHANNELS = 1
 SAMPLE_WIDTH = 2  # 16-bit audio
 
-audio_buffer = BytesIO()  # will hold a valid WAV-file stream
-video_buffer = BytesIO()  # will hold raw video packets (e.g. h264)
-wav_file = wave.open(audio_buffer, "wb")
+"""audio_buffer = BytesIO()  # will hold a valid WAV-file stream
+video_buffer = BytesIO()  # will hold raw video packets (e.g. h264)"""
+"""wav_file = wave.open(audio_buffer, "wb")
 wav_file.setnchannels(CHANNELS)
 wav_file.setsampwidth(SAMPLE_WIDTH)
-wav_file.setframerate(SAMPLE_RATE)
+wav_file.setframerate(SAMPLE_RATE)"""
 
 buffer_lock = asyncio.Lock()
 
@@ -118,25 +122,119 @@ async def websocket_endpoint(websocket: WebSocket):
         print("WebSocket connection closed.")
 
 
-@app.get("/upload")
-async def upload(
-    file1: UploadFile = File(...),
-    file2: UploadFile = File(...),
-    badge: int = Query(...),
-):
-    global doctor_id, audio_buffer, video_buffer, wav_file, expecting_audio
+@app.post("/upload-audio")
+async def upload_audio(file: UploadFile = File(...)):
+    # Read in the audio file and save it to a file and add the file path to the list
+    file_bytes = await file.read()
+    if file_bytes is None:
+        raise HTTPException(status_code=400, detail="Invalid audio file")
+
+    # Convert bytes to int16 samples
+    audio_data = np.frombuffer(file_bytes, dtype=np.int16)
+
+    # get the timestamp
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    audio_file_path = "audio" + ts + ".wav"
+
+    # Create WAV file with proper audio settings
+    with wave.open(audio_file_path, "w") as wav_file:
+        wav_file.setnchannels(CHANNELS)  # Using the global CHANNELS value (1 for mono)
+        wav_file.setsampwidth(
+            SAMPLE_WIDTH
+        )  # Using the global SAMPLE_WIDTH (2 bytes per sample)
+        wav_file.setframerate(SAMPLE_RATE)  # Using the global SAMPLE_RATE (16000)
+        wav_file.writeframes(audio_data.tobytes())
+
+    audio_file_paths.append(audio_file_path)
+    return {"message": "Audio processed successfully", "path": audio_file_path}
+
+
+@app.post("/upload-video")
+async def upload_video(file: UploadFile = File(...)):
+    # Read in the video file and save it to a file and add the file path to the list
+    file_bytes = await file.read()
+    if file_bytes is None:
+        raise HTTPException(status_code=400, detail="Invalid video file")
+
+    # get the timestamp
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # Video settings
+    width, height = 320, 240
+    frame_rate = 10  # FPS
+    output_folder = f"frames_{ts}"
+    video_file_path = f"video_{ts}.mp4"
+
+    # Ensure output folder exists
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
+    # Process raw video data
+    index = 0
+    offset = 0
+    frames = []
+
+    while offset < len(file_bytes):
+        # Read frame size (4 bytes)
+        frame_size = int.from_bytes(file_bytes[offset : offset + 4], byteorder="little")
+        offset += 4  # Move past frame size metadata
+
+        # Extract frame data
+        frame_data = file_bytes[offset : offset + frame_size]
+        offset += frame_size
+
+        # Save extracted frame as JPEG
+        frame_path = os.path.join(output_folder, f"frame_{index:03d}.jpg")
+        with open(frame_path, "wb") as img_file:
+            img_file.write(frame_data)
+
+        frames.append(frame_path)
+        index += 1
+
+    print(f"Extracted {index} frames.")
+
+    # Convert frames to video
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # Changed to MP4 format
+    video_writer = cv2.VideoWriter(video_file_path, fourcc, frame_rate, (width, height))
+
+    try:
+        for frame_path in frames:
+            frame = cv2.imread(frame_path)
+            if frame is not None:  # Check if frame was read successfully
+                video_writer.write(frame)
+    finally:
+        video_writer.release()
+
+    # Clean up frame files
+    for frame_path in frames:
+        try:
+            os.remove(frame_path)
+        except OSError:
+            pass
+    try:
+        os.rmdir(output_folder)
+    except OSError:
+        pass
+
+    video_file_paths.append(video_file_path)
+    return {"message": "Video processed successfully", "path": video_file_path}
+
+
+@app.get("/badge-scan/{badge_id}")
+async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
+    global doctor_id  # , audio_buffer, video_buffer, wav_file, expecting_audio
 
     patient_id = (
         supabase.table("patient")
         .select("id")
-        .eq("wristband_id", badge)
+        .eq("wristband_id", badge_id)
         .execute()
         .data[0]["id"]
     )
     # Get a timestamp – used for filenames
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # First, atomically capture and reset our buffers.
+    """# First, atomically capture and reset our buffers.
     async with buffer_lock:
         # Finalize the currently open WAV file (which finalizes the header)
         try:
@@ -156,12 +254,20 @@ async def upload(
         wav_file = wave.open(audio_buffer, "wb")
         wav_file.setnchannels(CHANNELS)
         wav_file.setsampwidth(SAMPLE_WIDTH)
-        wav_file.setframerate(SAMPLE_RATE)
+        wav_file.setframerate(SAMPLE_RATE)"""
+
+    # Read and merge all the audio files together
+    audio_data = []
+    for audio_file_path in audio_file_paths:
+        with open(audio_file_path, "rb") as f:
+            audio_data.append(f.read())
+
+    audio_data = b"".join(audio_data)
 
     # Save the audio to Supabase
     audio_file_path = "audio" + ts
     supabase.storage.from_("audio").upload(
-        audio_file_path, old_audio_bytes, file_options={"content-type": "audio/wav"}
+        audio_file_path, audio_data, file_options={"content-type": "audio/wav"}
     )
 
     # Get the file from supabase
@@ -189,10 +295,18 @@ async def upload(
         transcription.results.channels[0].alternatives[0].paragraphs.transcript
     )
 
+    # Read and merge all the video files together
+    video_data = []
+    for video_file_path in video_file_paths:
+        with open(video_file_path, "rb") as f:
+            video_data.append(f.read())
+
+    video_data = b"".join(video_data)
+
     # Save the video to Supabase
     video_file_path = "video" + ts
     supabase.storage.from_("video").upload(
-        video_file_path, old_video_bytes, file_options={"content-type": "video/mp4"}
+        video_file_path, video_data, file_options={"content-type": "video/mp4"}
     )
 
     video_url = supabase.storage.from_("video").create_signed_url(audio_file_path, 300)[
