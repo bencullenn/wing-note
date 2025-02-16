@@ -1,14 +1,15 @@
 import VisitDetails from "@/components/VisitDetails";
 import { ChatComponent } from "@/components/ChatComponent";
 
-export default function AppointmentPage({
+export default async function AppointmentPage({
   params,
 }: {
   params: { id: string };
 }) {
+  const { id } = await params;
   return (
     <div className="p-4 space-y-6">
-      <VisitDetails id={params.id} />
+      <VisitDetails id={id} />
     </div>
   );
 }
