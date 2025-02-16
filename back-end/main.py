@@ -243,6 +243,7 @@ def get_patient_visits(patient_id: int):
         supabase.table("visit")
         .select("id, doctor(first_name, last_name, location), created_at, type")
         .eq("patient", patient_id)
+        .eq("approved", True)
         .order("created_at", desc=True)
         .execute()
     )
