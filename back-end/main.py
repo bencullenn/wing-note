@@ -52,6 +52,8 @@ deepgram_client = DeepgramClient(deepgram_key)
 google_api_key = os.environ.get("GOOGLE_API_KEY")
 genai.configure(api_key=google_api_key)
 
+mistral_api_key = os.getenv("MISTRAL_API_KEY")
+
 doctor_id = 1
 
 perplexity_api_key = os.environ.get("PERPLEXITY_API_KEY")
@@ -116,8 +118,12 @@ async def websocket_endpoint(websocket: WebSocket):
         print("WebSocket connection closed.")
 
 
-@app.get("/badge-scan/{badge}")
-async def badge_scan(badge: int):
+@app.get("/upload")
+async def upload(
+    file1: UploadFile = File(...),
+    file2: UploadFile = File(...),
+    badge: int = Query(...),
+):
     global doctor_id, audio_buffer, video_buffer, wav_file, expecting_audio
 
     patient_id = (
@@ -366,15 +372,15 @@ def get_patient(patient_mrn: int):
     )
     return patient.data[0]
 
+
 @app.post("/chat")
 async def chat(messages: List[Dict]):
-    
     headers = {
         "Authorization": f"Bearer {perplexity_api_key}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
     print("messages", messages)
-    
+
     try:
         response = requests.post(
             "https://api.perplexity.ai/chat/completions",
@@ -382,29 +388,36 @@ async def chat(messages: List[Dict]):
             json={
                 "model": "sonar",
                 "messages": messages,
-            }
+            },
         )
 
         print("response", response.json())
         if response.status_code == 200:
             return response.json()
         else:
-            raise HTTPException(status_code=response.status_code, detail="Failed to get AI response")
-            
+            raise HTTPException(
+                status_code=response.status_code, detail="Failed to get AI response"
+            )
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/chat-context")
 async def chat_context(visit_id: int):
     visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
     return visit.data[0]
 
+
 def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
     """
     Use Mistral AI to parse combined audio and video information into structured fields
     """
-    api_key = os.getenv("MISTRAL_API_KEY")
-    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {mistral_api_key}",
+    }
 
     prompt = f"""You are an expert medical doctor with extensive experience in clinical documentation and EHR systems. 
     Your task is to analyze both the transcribed consultation and visual assessment data to create a comprehensive medical record.
@@ -683,6 +696,80 @@ def get_visit_by_id(id: int):
     visit_data["doctor_last_name"] = visit_data["doctor"]["last_name"]
 
     return visit_data
+
+
+@app.get("/visit-summary/{id}")
+def get_visit_summary(id: int):
+    visits = (
+        supabase.table("visit")
+        .select(
+            "id, patient(mrn, first_name, last_name, age, gender), doctor(first_name, last_name), created_at, hpi, pmh, cc, meds, allergies, ros, vitals, findings, diagnosis, plan, interventions, eval, discharge, approved"
+        )
+        .eq("id", id)
+        .execute()
+    )
+
+    if not visits.data:
+        raise HTTPException(status_code=404, detail="Visit not found")
+
+    # Use mixtral to generate a summary of the visit
+    visit_data = visits.data[0]
+    prompt = f"""You are a medical professional reviewing a patient visit record. 
+    Summarize the key information from the visit into a concise and informative report.
+    Make sure to explain any medical terms and provide context for the patient's condition.
+
+    Patient: {visit_data["patient"]["first_name"]} {visit_data["patient"]["last_name"]} (MRN: {visit_data["patient"]["mrn"]})
+    Doctor: {visit_data["doctor"]["first_name"]} {visit_data["doctor"]["last_name"]}
+    Date: {visit_data["created_at"]}
+
+    Chief Complaint: {visit_data.get("cc", "")}
+    History of Present Illness: {visit_data.get("hpi", "")}
+    Past Medical History: {visit_data.get("pmh", "")}
+    Current Medications: {visit_data.get("meds", "")}
+    Allergies: {visit_data.get("allergies", "")}
+    Review of Systems: {visit_data.get("ros", "")}
+    Vitals: {visit_data.get("vitals", "")}
+    Physical Examination Findings: {visit_data.get("findings", "")}
+    Diagnosis: {visit_data.get("diagnosis", "")}
+    Plan: {visit_data.get("plan", "")}
+    Interventions: {visit_data.get("interventions", "")}
+    Evaluation: {visit_data.get("eval", "")}
+    Discharge Instructions: {visit_data.get("discharge", "")}
+    """
+
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {mistral_api_key}",
+        }
+
+        response = requests.post(
+            "https://api.mistral.ai/v1/chat/completions",
+            headers=headers,
+            json={
+                "model": "mistral-large-latest",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are a medical professional summarizing a patient visit record.",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+            },
+        )
+
+        if response.status_code != 200:
+            raise Exception(f"API call failed with status code: {response.status_code}")
+
+        result = response.json()
+        print("REsult", result)
+        summary = result["choices"][0]["message"]["content"]
+        print("Summary", summary)
+        return summary
+
+    except Exception as e:
+        print(f"Error in LLM processing: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 ### Patient Portal Endpoints
