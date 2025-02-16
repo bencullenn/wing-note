@@ -651,7 +651,7 @@ async def generate_visit_questions(visit_data: dict) -> List[str]:
 def get_visits():
     visits = (
         supabase.table("visit")
-        .select("id, patient(first_name), created_at")
+        .select("id, patient(first_name, last_name), created_at, approved")
         .order("created_at", desc=True)
         .execute()
     )

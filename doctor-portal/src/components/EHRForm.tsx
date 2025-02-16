@@ -212,6 +212,15 @@ export function EHRForm({ visitId: visitId }: { visitId: number }) {
         method: "POST",
         body: formDataObj,
       });
+      if (response.ok) {
+      const updatedVisit = await response.json();
+      // Update the form data with the response
+      setFormData({
+        ...formData,
+        ...updatedVisit.data[0],
+        approved: true
+      });
+    }
     } catch (error) {
       console.error("Error saving visit data:", error);
     } finally {
@@ -228,43 +237,58 @@ export function EHRForm({ visitId: visitId }: { visitId: number }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
-      {ehrCategories.map((category) => (
-        <Card key={category.title}>
-          <CardHeader>
-            <CardTitle>{category.title}</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {category.fields.map((field) => (
-              <div key={field.name} className="space-y-2">
-                <Label htmlFor={field.name}>{field.label}</Label>
-                {field.type === "textarea" ? (
-                  <Textarea
-                    id={field.name}
-                    value={formData[field.name] || ""}
-                    onChange={(e) =>
-                      handleInputChange(field.name, e.target.value)
-                    }
-                    className="w-full"
-                  />
-                ) : (
-                  <Input
-                    id={field.name}
-                    value={formData[field.name] || ""}
-                    onChange={(e) =>
-                      handleInputChange(field.name, e.target.value)
-                    }
-                    className="w-full"
-                  />
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      ))}
+    <form onSubmit={handleSubmit} className="max-w-7xl mx-auto p-6 space-y-8">
+      <div className={formData.approved ? "pointer-events-none" : ""}>
+        {ehrCategories.map((category) => (
+          <Card key={category.title} className="shadow-sm">
+            <CardHeader className="bg-gray-50 border-b">
+              <CardTitle className="text-xl">{category.title}</CardTitle>
+            </CardHeader>
+            <CardContent className="p-6 space-y-6">
+              {category.fields.map((field) => (
+                <div key={field.name} className="space-y-3">
+                  <Label 
+                    htmlFor={field.name} 
+                    className="text-sm font-medium text-gray-700"
+                  >
+                    {field.label}
+                  </Label>
+                  {field.type === "textarea" ? (
+                    <Textarea
+                      id={field.name}
+                      value={formData[field.name] || ""}
+                      onChange={(e) =>
+                        handleInputChange(field.name, e.target.value)
+                      }
+                      className="w-full min-h-[100px] resize-y"
+                      placeholder={field.label}
+                    />
+                  ) : (
+                    <Input
+                      id={field.name}
+                      value={formData[field.name] || ""}
+                      onChange={(e) =>
+                        handleInputChange(field.name, e.target.value)
+                      }
+                      className="w-full"
+                      placeholder={field.label}
+                    />
+                  )}
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        ))}
+      </div>
 
-      <Button type="submit" className="w-full" disabled={isSaving}>
-        {isSaving ? "Saving..." : "Approve and Save"}
+      <Button 
+        type="submit" 
+        className={`w-full p-6 text-lg font-medium ${
+          formData.approved ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'
+        }`} 
+        disabled={isSaving || Boolean(formData.approved)}
+      >
+        {isSaving ? "Saving..." : formData.approved ? "Approved" : "Approve and Save"}
       </Button>
     </form>
   );

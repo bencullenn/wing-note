@@ -17,12 +17,17 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <div className="container mx-auto p-4">
-          <header className="mb-8">
-            <h1 className="text-3xl font-bold text-primary">EHR System</h1>
+      <body className={`${inter.className} bg-gray-50`}>
+        <div className="min-h-screen flex flex-col">
+          <header className="bg-white border-b border-purple-100">
+            <div className="max-w-7xl mx-auto px-6 py-4">
+              <h1 className="text-3xl font-bold text-gray-900">
+                <span className="text-purple-600">Wingnote</span> EHR System
+              </h1>
+              <p className="mt-1 text-sm text-gray-500">Electronic Health Records Management</p>
+            </div>
           </header>
-          <main>{children}</main>
+          <main className="flex-1">{children}</main>
         </div>
       </body>
     </html>
