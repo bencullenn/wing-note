@@ -1,105 +1,79 @@
-"use client"
-import { useState, useEffect, useRef } from "react"
-import { useChat } from "@ai-sdk/react"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Card, CardContent } from "@/components/ui/card"
-import { Send, Mic, MicOff, X } from "lucide-react"
-import { Switch } from "@/components/ui/switch"
-import { cn } from "@/lib/utils"
-import SpeechRecognition from "speech-recognition-polyfill"
+"use client";
+import { useState, useEffect, useRef } from "react";
+import { useChat } from "@ai-sdk/react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent } from "@/components/ui/card";
+import { Send, Mic, MicOff, X } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/utils";
 
 interface ChatComponentProps {
-  context: string
-  initialMessage?: string
+  context: string;
+  initialMessage?: string;
 }
 
 export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
-  const [isVoiceMode, setIsVoiceMode] = useState(false)
-  const [isListening, setIsListening] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const synthRef = useRef<SpeechSynthesis | null>(null)
+  const [isVoiceMode, setIsVoiceMode] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const synthRef = useRef<SpeechSynthesis | null>(null);
 
-  const { messages, input, handleInputChange, handleSubmit, setInput } = useChat({
-    api: "/api/chat",
-    initialMessages: [
-      {
-        id: "1",
-        role: "system",
-        content: `You are a helpful assistant for a patient app. The current context is: ${context}. ${initialMessage ? `The user is asking about: ${initialMessage}` : ""}`,
-      },
-    ],
-  })
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      recognitionRef.current = new (window.SpeechRecognition || window.webkitSpeechRecognition || SpeechRecognition)()
-      recognitionRef.current.continuous = true
-      recognitionRef.current.interimResults = true
-
-      recognitionRef.current.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map((result) => result[0].transcript)
-          .join("")
-        setInput(transcript)
-      }
-
-      recognitionRef.current.onend = () => {
-        setIsListening(false)
-      }
-
-      synthRef.current = window.speechSynthesis
-    }
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
-      if (synthRef.current) {
-        synthRef.current.cancel()
-      }
-    }
-  }, [setInput])
+  const { messages, input, handleInputChange, handleSubmit, setInput } =
+    useChat({
+      api: "/api/chat",
+      initialMessages: [
+        {
+          id: "1",
+          role: "system",
+          content: `You are a helpful assistant for a patient app. The current context is: ${context}. ${
+            initialMessage ? `The user is asking about: ${initialMessage}` : ""
+          }`,
+        },
+      ],
+    });
 
   const toggleVoiceMode = () => {
-    setIsVoiceMode(!isVoiceMode)
+    setIsVoiceMode(!isVoiceMode);
     if (isListening) {
-      recognitionRef.current?.stop()
+      //recognitionRef.current?.stop();
     }
-  }
+  };
 
   const toggleListening = () => {
     if (isListening) {
-      recognitionRef.current?.stop()
+      //recognitionRef.current?.stop();
     } else {
-      recognitionRef.current?.start()
-      setIsListening(true)
+      //recognitionRef.current?.start();
+      setIsListening(true);
     }
-  }
+  };
 
   const handleVoiceSubmit = () => {
     if (input.trim()) {
-      handleSubmit(new Event("submit") as any)
-      recognitionRef.current?.stop()
+      handleSubmit(new Event("submit") as any);
+      //recognitionRef.current?.stop();
     }
-  }
+  };
 
   useEffect(() => {
     if (isVoiceMode && messages.length > 0) {
-      const lastMessage = messages[messages.length - 1]
+      const lastMessage = messages[messages.length - 1];
       if (lastMessage.role === "assistant") {
-        setIsSpeaking(true)
-        const utterance = new SpeechSynthesisUtterance(lastMessage.content)
-        utterance.onend = () => setIsSpeaking(false)
-        synthRef.current?.speak(utterance)
+        setIsSpeaking(true);
+        const utterance = new SpeechSynthesisUtterance(lastMessage.content);
+        utterance.onend = () => setIsSpeaking(false);
+        synthRef.current?.speak(utterance);
       }
     }
-  }, [isVoiceMode, messages])
+  }, [isVoiceMode, messages]);
 
   return (
     <Card
-      className={cn("flex flex-col h-full transition-all duration-300", isVoiceMode && "bg-gray-950 border-gray-800")}
+      className={cn(
+        "flex flex-col h-full transition-all duration-300",
+        isVoiceMode && "bg-gray-950 border-gray-800"
+      )}
     >
       <CardContent className="flex flex-col h-full p-4 relative">
         {isVoiceMode && (
@@ -114,7 +88,11 @@ export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
         {!isVoiceMode && (
           <div className="flex justify-end items-center mb-4">
             <div className="flex items-center space-x-2">
-              <Switch checked={isVoiceMode} onCheckedChange={toggleVoiceMode} id="voice-mode" />
+              <Switch
+                checked={isVoiceMode}
+                onCheckedChange={toggleVoiceMode}
+                id="voice-mode"
+              />
               <label htmlFor="voice-mode" className="text-sm">
                 Voice Mode
               </label>
@@ -122,17 +100,27 @@ export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
           </div>
         )}
 
-        <div className={cn("flex-grow overflow-y-auto mb-4 space-y-4", isVoiceMode && "text-white")}>
+        <div
+          className={cn(
+            "flex-grow overflow-y-auto mb-4 space-y-4",
+            isVoiceMode && "text-white"
+          )}
+        >
           {messages.map((message) => (
-            <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+            <div
+              key={message.id}
+              className={`flex ${
+                message.role === "user" ? "justify-end" : "justify-start"
+              }`}
+            >
               <div
                 className={cn(
                   "max-w-[80%] rounded-2xl px-4 py-2",
                   message.role === "user"
                     ? "bg-purple-600 text-white rounded-br-none"
                     : isVoiceMode
-                      ? "bg-gray-800 text-white rounded-bl-none"
-                      : "bg-gray-100 text-gray-800 rounded-bl-none",
+                    ? "bg-gray-800 text-white rounded-bl-none"
+                    : "bg-gray-100 text-gray-800 rounded-bl-none"
                 )}
               >
                 {message.content}
@@ -157,10 +145,16 @@ export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
               onClick={toggleListening}
               className={cn(
                 "rounded-full w-16 h-16 p-0",
-                isListening ? "bg-red-500 hover:bg-red-600" : "bg-purple-600 hover:bg-purple-700",
+                isListening
+                  ? "bg-red-500 hover:bg-red-600"
+                  : "bg-purple-600 hover:bg-purple-700"
               )}
             >
-              {isListening ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+              {isListening ? (
+                <MicOff className="h-6 w-6" />
+              ) : (
+                <Mic className="h-6 w-6" />
+              )}
             </Button>
           ) : (
             <form onSubmit={handleSubmit} className="flex gap-2">
@@ -170,7 +164,10 @@ export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
                 placeholder="Type your message..."
                 className="flex-grow"
               />
-              <Button type="submit" className="bg-purple-600 hover:bg-purple-700">
+              <Button
+                type="submit"
+                className="bg-purple-600 hover:bg-purple-700"
+              >
                 <Send className="h-4 w-4" />
               </Button>
             </form>
@@ -178,6 +175,5 @@ export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
-
