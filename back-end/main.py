@@ -43,6 +43,8 @@ google_api_key = os.environ.get("GOOGLE_API_KEY")
 genai.configure(api_key=google_api_key)
 model = GenerativeModel('gemini-pro-vision')
 
+perplexity_api_key = os.environ.get("PERPLEXITY_API_KEY")
+
 app = FastAPI()
 
 app.add_middleware(
@@ -384,6 +386,38 @@ def get_patient(patient_mrn: int):
     )
     return patient.data[0]
 
+@app.post("/chat")
+async def chat(messages: List[Dict]):
+    
+    headers = {
+        "Authorization": f"Bearer {perplexity_api_key}",
+        "Content-Type": "application/json"
+    }
+    print("messages", messages)
+    
+    try:
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers=headers,
+            json={
+                "model": "sonar",
+                "messages": messages,
+            }
+        )
+
+        print("response", response.json())
+        if response.status_code == 200:
+            return response.json()
+        else:
+            raise HTTPException(status_code=response.status_code, detail="Failed to get AI response")
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/chat-context")
+async def chat_context(visit_id: int):
+    visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
+    return visit.data[0]
 
 def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
     """
@@ -565,6 +599,7 @@ async def process_video(video_path: str) -> Dict:
             "error": str(e)
         }
 
+@app.get("/generate-questions")
 async def generate_visit_questions(visit_data: dict) -> List[str]:
     """Generate relevant questions based on visit data using Perplexity API"""
     

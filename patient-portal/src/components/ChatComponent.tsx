@@ -1,183 +1,197 @@
 "use client"
-import { useState, useEffect, useRef } from "react"
-import { useChat } from "@ai-sdk/react"
+import React from 'react'
+import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
-import { Send, Mic, MicOff, X } from "lucide-react"
-import { Switch } from "@/components/ui/switch"
-import { cn } from "@/lib/utils"
-import SpeechRecognition from "speech-recognition-polyfill"
+import { Send } from "lucide-react"
+import { API_URL, PATIENT_MRN } from "../../config";
 
 interface ChatComponentProps {
-  context: string
-  initialMessage?: string
+  context: 'general' | 'visit';  // Define specific context types
+  visitId?: number;  // Optional for visit-specific context
 }
 
-export function ChatComponent({ context, initialMessage }: ChatComponentProps) {
-  const [isVoiceMode, setIsVoiceMode] = useState(false)
-  const [isListening, setIsListening] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
-  const recognitionRef = useRef<SpeechRecognition | null>(null)
-  const synthRef = useRef<SpeechSynthesis | null>(null)
+interface Message {
+  role: string
+  content: string
+}
 
-  const { messages, input, handleInputChange, handleSubmit, setInput } = useChat({
-    api: "/api/chat",
-    initialMessages: [
-      {
-        id: "1",
-        role: "system",
-        content: `You are a helpful assistant for a patient app. The current context is: ${context}. ${initialMessage ? `The user is asking about: ${initialMessage}` : ""}`,
-      },
-    ],
-  })
+export function ChatComponent({ context, visitId }: ChatComponentProps) {
+  const [messages, setMessages] = useState<Message[]>([])
+  const [input, setInput] = useState('')
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([])
+  const [isLoading, setIsLoading] = useState(false)
+  //const { t, i18n } = useTranslation()
 
+  // Fetch suggested questions when component mounts
+  const setUpChat = async () => {
+    console.log("setUpChat")
+    fetchQuestions();
+    const contextString = await getContextString();
+    setSystemPrompt(contextString);
+  }
+  
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      recognitionRef.current = new (window.SpeechRecognition || window.webkitSpeechRecognition || SpeechRecognition)()
-      recognitionRef.current.continuous = true
-      recognitionRef.current.interimResults = true
+    setUpChat();
+  }, [])
 
-      recognitionRef.current.onresult = (event) => {
-        const transcript = Array.from(event.results)
-          .map((result) => result[0].transcript)
-          .join("")
-        setInput(transcript)
-      }
+  const updateMessages = (messages: Message[]) => {
+    setMessages(messages);
+  }
 
-      recognitionRef.current.onend = () => {
-        setIsListening(false)
-      }
-
-      synthRef.current = window.speechSynthesis
-    }
-
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop()
-      }
-      if (synthRef.current) {
-        synthRef.current.cancel()
-      }
-    }
-  }, [setInput])
-
-  const toggleVoiceMode = () => {
-    setIsVoiceMode(!isVoiceMode)
-    if (isListening) {
-      recognitionRef.current?.stop()
+  const fetchQuestions = async () => {
+    try {
+      const response = await fetch(API_URL + `/generate-questions`);
+      const data = await response.json()
+      setSuggestedQuestions(data.questions)
+    } catch (error) {
+      console.error('Error fetching questions:', error)
     }
   }
 
-  const toggleListening = () => {
-    if (isListening) {
-      recognitionRef.current?.stop()
-    } else {
-      recognitionRef.current?.start()
-      setIsListening(true)
+  const getContextString = async () => {
+    if (context === 'general') {
+      return `General medical chat about all your visits and medical history`;
+    } else if (context === 'visit' && visitId) {
+      const response = await fetch(API_URL + `/chat-context/${visitId}`);
+      const data = await response.json();
+      return data.context;
     }
+    return '';
+  };
+
+  const setSystemPrompt = (context: string) => {
+    console.log("messages before pushing system prompt", messages)
+    setMessages([{
+      "role": "system",
+      "content": `You are a knowledgeable and compassionate medical assistant helping patients understand their health information.
+
+                  Your key responsibilities:
+                  1. Explain medical terms and concepts at the appropriate level of complexity for each patient
+                  2. Break down medical information based on the patient's needs and preferences
+                  3. Provide clear context for lab results, diagnoses, and treatments
+                  4. Use friendly, reassuring language while maintaining professionalism
+                  5. Give practical examples when helpful
+                  6. Acknowledge and address concerns or worries
+                  7. Empower patients with knowledge to better manage their health
+
+                  Context about the patient: ${context}
+
+                  Remember to:
+                  - Adapt your language and complexity level based on the patient's question and needs
+                  - If they want simple explanations, use plain language
+                  - If they want technical details, provide more complex medical information
+                  - If they want brief answers, be concise
+                  - If they want in-depth explanations, be comprehensive
+                  - Always maintain professionalism while being flexible with your communication style
+                  - Gauge the appropriate level of detail from their question
+                  - Express empathy and understanding
+                  `
+    
+              }]);
+    console.log("messages after pushing system prompt", messages)
   }
 
-  const handleVoiceSubmit = () => {
-    if (input.trim()) {
-      handleSubmit(new Event("submit") as any)
-      recognitionRef.current?.stop()
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+  
+    const userMessage = { 
+      role: 'user', 
+      content: input, 
+    };
+  
+    // Create the new messages array
+    const updatedMessages = [...messages, userMessage];
+    
+    // Update state
+    setMessages(updatedMessages);
+    setInput('');
+    setIsLoading(true);
+  
+    try {
+      const response = await fetch(API_URL + '/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        // Use the updatedMessages array instead of messages
+        body: JSON.stringify(updatedMessages)
+      });
+  
+      const data = await response.json();
+      const aiResponse = data.choices[0].message.content;
+      setMessages([...updatedMessages, { 
+        role: 'assistant', 
+        content: aiResponse,
+      }]);
+      setIsLoading(false);
+    } catch (error) {
+      console.error('Error getting AI response:', error);
+      setIsLoading(false);
     }
   }
-
-  useEffect(() => {
-    if (isVoiceMode && messages.length > 0) {
-      const lastMessage = messages[messages.length - 1]
-      if (lastMessage.role === "assistant") {
-        setIsSpeaking(true)
-        const utterance = new SpeechSynthesisUtterance(lastMessage.content)
-        utterance.onend = () => setIsSpeaking(false)
-        synthRef.current?.speak(utterance)
-      }
-    }
-  }, [isVoiceMode, messages])
 
   return (
-    <Card
-      className={cn("flex flex-col h-full transition-all duration-300", isVoiceMode && "bg-gray-950 border-gray-800")}
-    >
-      <CardContent className="flex flex-col h-full p-4 relative">
-        {isVoiceMode && (
-          <button
-            onClick={() => setIsVoiceMode(false)}
-            className="absolute top-4 left-4 text-gray-400 hover:text-white"
-          >
-            <X className="h-6 w-6" />
-          </button>
-        )}
-
-        {!isVoiceMode && (
-          <div className="flex justify-end items-center mb-4">
-            <div className="flex items-center space-x-2">
-              <Switch checked={isVoiceMode} onCheckedChange={toggleVoiceMode} id="voice-mode" />
-              <label htmlFor="voice-mode" className="text-sm">
-                Voice Mode
-              </label>
+    <Card className="flex flex-col h-full">
+      <CardContent className="flex flex-col h-full p-4">
+        {/* Suggested Questions */}
+        {visitId && (
+          <div className="mb-4">
+            <h3 className="text-lg font-semibold mb-2">{('suggested_questions')}</h3>
+            <div className="flex flex-wrap gap-2">
+              {suggestedQuestions.map((question, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  className="bg-purple-100 hover:bg-purple-200 px-3 py-1 rounded-full text-sm"
+                  onClick={() => setInput(question)}
+                >
+                  {question}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
-        <div className={cn("flex-grow overflow-y-auto mb-4 space-y-4", isVoiceMode && "text-white")}>
-          {messages.map((message) => (
-            <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+        {/* Chat Messages */}
+        <div className="flex-grow overflow-y-auto mb-4 space-y-4">
+          {messages.map((message, index) => (
+            <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
               <div
-                className={cn(
-                  "max-w-[80%] rounded-2xl px-4 py-2",
+                className={`max-w-[80%] rounded-2xl px-4 py-2 ${
                   message.role === "user"
                     ? "bg-purple-600 text-white rounded-br-none"
-                    : isVoiceMode
-                      ? "bg-gray-800 text-white rounded-bl-none"
-                      : "bg-gray-100 text-gray-800 rounded-bl-none",
-                )}
+                    : "bg-gray-100 text-gray-800 rounded-bl-none"
+                }`}
               >
                 {message.content}
               </div>
             </div>
           ))}
-          {isListening && (
-            <div className="flex justify-center">
-              <div className="flex space-x-1">
-                <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                <span className="w-2 h-2 bg-purple-500 rounded-full animate-bounce"></span>
+          {isLoading && (
+            <div className="flex justify-start">
+              <div className="bg-gray-100 rounded-lg p-3">
+                <span className="animate-pulse">{('typing')}</span>
               </div>
             </div>
           )}
         </div>
 
-        <div className={cn("relative", isVoiceMode && "flex justify-center")}>
-          {isVoiceMode ? (
-            <Button
-              size="lg"
-              onClick={toggleListening}
-              className={cn(
-                "rounded-full w-16 h-16 p-0",
-                isListening ? "bg-red-500 hover:bg-red-600" : "bg-purple-600 hover:bg-purple-700",
-              )}
-            >
-              {isListening ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
-            </Button>
-          ) : (
-            <form onSubmit={handleSubmit} className="flex gap-2">
-              <Input
-                value={input}
-                onChange={handleInputChange}
-                placeholder="Type your message..."
-                className="flex-grow"
-              />
-              <Button type="submit" className="bg-purple-600 hover:bg-purple-700">
-                <Send className="h-4 w-4" />
-              </Button>
-            </form>
-          )}
-        </div>
+        {/* Input Form */}
+        <form onSubmit={handleSubmit} className="flex gap-2">
+          <Input
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder={('ask_question')}
+            className="flex-grow"
+          />
+          <Button type="submit" className="bg-purple-600 hover:bg-purple-700" disabled={isLoading}>
+            <Send className="h-4 w-4" />
+          </Button>
+        </form>
       </CardContent>
     </Card>
   )
 }
-
