@@ -299,6 +299,59 @@ async def process_medical_text(raw_text: str):
         return {"error": f"Error processing text: {str(e)}"}
 
 
+# Create an endpoint to process a video
+async def process_audio(audio_path: str):
+    # Get the file from supabase
+    url = supabase.storage.from_("recordings").create_signed_url(audio_path, 300)[
+        "signedURL"
+    ]
+    print("Signed URL", url)
+    AUDIO_URL = {
+        "url": url,
+    }
+
+    ## STEP 2 Call the transcribe_url method on the prerecorded class
+    options: PrerecordedOptions = PrerecordedOptions(
+        model="nova-3",
+        smart_format=True,
+        diarize=True,
+    )
+    response = deepgram_client.listen.rest.v("1").transcribe_url(AUDIO_URL, options)
+    print(f"response: {response}\n\n")
+    return response
+
+
+def process_video(video_path: str):
+    print("Processing video", video_path)
+    # Process video here
+    return {"message": "Video processed"}
+
+
+## Patient Portal
+@app.get("/patient-visits/{patient_id}")
+def get_patient_visits(patient_id: int):
+    visits = (
+        supabase.table("visit")
+        .select("id, doctor(first_name, last_name, location), created_at, type")
+        .eq("patient", patient_id)
+        .eq("approved", True)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return visits.data
+
+
+@app.get("/patient/{patient_mrn}")
+def get_patient(patient_mrn: int):
+    patient = (
+        supabase.table("patient")
+        .select("mrn, first_name, last_name, age, gender")
+        .eq("mrn", patient_mrn)
+        .execute()
+    )
+    return patient.data[0]
+
+
 def parse_medical_text(raw_text: str) -> Dict:
     """
     Use Mistral AI to parse raw medical text into structured fields

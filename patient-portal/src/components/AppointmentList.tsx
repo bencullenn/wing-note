@@ -1,59 +1,58 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import Link from "next/link"
-import { Card } from "@/components/ui/card"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Clock, MapPin } from "lucide-react"
-import { format } from "date-fns"
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Clock, MapPin } from "lucide-react";
+import { format } from "date-fns";
+import { API_URL, PATIENT_MRN } from "../../config";
 
-const appointments = [
-  {
-    id: 1,
-    title: "Colonoscopy",
-    date: "2025-10-15",
-    doctor: "Dr. William Chen",
-    specialty: "Gastroenterologist",
-    location: "2nd Floor, 50 Stanford St",
-  },
-  {
-    id: 2,
-    title: "Dental Cleaning",
-    date: "2025-09-05",
-    doctor: "Dr. Serena Wang",
-    specialty: "Dentist",
-    location: "40 Benefit St",
-  },
-  {
-    id: 3,
-    title: "Annual Physical",
-    date: "2025-08-20",
-    doctor: "Dr. Karen Smith",
-    specialty: "General Practitioner",
-    location: "3rd Floor, 17 Pine St",
-  },
-]
+interface Appointment {
+  id: number;
+  type: string;
+  created_at: string;
+  doctor: { first_name: string; last_name: string; location: string };
+}
 
 export default function AppointmentList() {
-  const [specialty, setSpecialty] = useState("all")
+  const [type, setType] = useState("all");
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
 
   const filteredAppointments = appointments.filter((appointment) => {
-    if (specialty !== "all" && appointment.specialty !== specialty) return false
-    return true
-  })
+    if (type !== "all" && appointment.type !== type) return false;
+    return true;
+  });
+
+  async function getPatientVisits() {
+    const response = await fetch(API_URL + `/patient-visits/${PATIENT_MRN}`);
+    const data = await response.json();
+    console.log("Data: ", data);
+    setAppointments(data);
+  }
+
+  useEffect(() => {
+    getPatientVisits();
+  }, []);
 
   return (
     <div className="space-y-4">
       <div className="flex gap-4 flex-wrap">
-        <Select value={specialty} onValueChange={setSpecialty}>
+        <Select value={type} onValueChange={setType}>
           <SelectTrigger className="w-[180px]">
-            <SelectValue placeholder="Filter by specialty" />
+            <SelectValue placeholder="Filter by visit type" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Specialties</SelectItem>
-            <SelectItem value="General Practitioner">General Practitioner</SelectItem>
-            <SelectItem value="Gastroenterologist">Gastroenterologist</SelectItem>
-            <SelectItem value="Dentist">Dentist</SelectItem>
+            <SelectItem value="all">Any</SelectItem>
+            <SelectItem value="general">General Exam</SelectItem>
+            <SelectItem value="specialist">Specialist Consultation</SelectItem>
+            <SelectItem value="dental">Dentist</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -64,18 +63,27 @@ export default function AppointmentList() {
             <Card className="hover:shadow-md transition-all duration-200">
               <div className="p-4 space-y-3">
                 <div className="flex justify-between items-start">
-                  <h3 className="font-medium text-lg">{appointment.title}</h3>
-                  <span className="text-purple-600">{format(new Date(appointment.date), "MM/dd/yyyy")}</span>
+                  <h3 className="font-medium text-lg">
+                    {appointment.type.charAt(0).toUpperCase() +
+                      appointment.type.slice(1)}
+                  </h3>
+                  <span className="text-purple-600">
+                    {format(new Date(appointment.created_at), "MM/dd/yyyy")}
+                  </span>
                 </div>
 
                 <div className="space-y-2 text-gray-600">
                   <div className="flex items-center gap-2">
                     <Clock className="w-4 h-4" />
-                    <span>{appointment.doctor}</span>
+                    <span>
+                      {appointment.doctor.first_name +
+                        " " +
+                        appointment.doctor.last_name}
+                    </span>
                   </div>
                   <div className="flex items-center gap-2">
                     <MapPin className="w-4 h-4" />
-                    <span>{appointment.location}</span>
+                    <span>{appointment.doctor.location}</span>
                   </div>
                 </div>
               </div>
@@ -84,6 +92,5 @@ export default function AppointmentList() {
         ))}
       </div>
     </div>
-  )
+  );
 }
-
