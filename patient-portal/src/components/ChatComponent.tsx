@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input"
 import { Card, CardContent } from "@/components/ui/card"
 import { Send } from "lucide-react"
 import { API_URL, PATIENT_MRN } from "../../config";
+import ReactMarkdown from 'react-markdown';
 
 interface ChatComponentProps {
   context: 'general' | 'visit';  // Define specific context types
@@ -64,31 +65,35 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
   const setSystemPrompt = (context: string) => {
     console.log("messages before pushing system prompt", messages)
     setMessages([{
+      // First, update the system prompt
       "role": "system",
       "content": `You are a knowledgeable and compassionate medical assistant helping patients understand their health information.
 
                   Your key responsibilities:
-                  1. Explain medical terms and concepts at the appropriate level of complexity for each patient
-                  2. Break down medical information based on the patient's needs and preferences
-                  3. Provide clear context for lab results, diagnoses, and treatments
-                  4. Use friendly, reassuring language while maintaining professionalism
-                  5. Give practical examples when helpful
-                  6. Acknowledge and address concerns or worries
-                  7. Empower patients with knowledge to better manage their health
-
+                  1. Provide clear, concise explanations of medical information
+                  2. Match the user's communication style and desired level of detail
+                  3. Use friendly, reassuring language while maintaining professionalism
+                  4. Include relevant citations as numbered markdown links
+                  
                   Context about the patient: ${context}
 
-                  Remember to:
-                  - Adapt your language and complexity level based on the patient's question and needs
-                  - If they want simple explanations, use plain language
-                  - If they want technical details, provide more complex medical information
-                  - If they want brief answers, be concise
-                  - If they want in-depth explanations, be comprehensive
-                  - Always maintain professionalism while being flexible with your communication style
-                  - Gauge the appropriate level of detail from their question
-                  - Express empathy and understanding
+                  Response format:
+                  - Start with brief, clear answers
+                  - Provide more detailed explanations only if asked
+                  - Match the user's language complexity level
+                  - When citing in text, use [n] format
+                  - When listing sources, use this format:
+                    Sources:
+                    1. [Source Title](URL)
+                    2. [Source Title](URL)
+
+                  Example:
+                  Eat plenty of vegetables [1] and whole grains [2].
+
+                  Sources:
+                  1. [Harvard Health - Nutrition Guide](https://health.harvard.edu/...)
+                  2. [NIH Dietary Guidelines](https://www.nih.gov/...)
                   `
-    
               }]);
     console.log("messages after pushing system prompt", messages)
   }
@@ -157,18 +162,45 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
 
         {/* Chat Messages */}
         <div className="flex-grow overflow-y-auto mb-4 space-y-4">
-          {messages.map((message, index) => (
-            <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-              <div
-                className={`max-w-[80%] rounded-2xl px-4 py-2 ${
-                  message.role === "user"
-                    ? "bg-purple-600 text-white rounded-br-none"
-                    : "bg-gray-100 text-gray-800 rounded-bl-none"
-                }`}
-              >
-                {message.content}
+          {messages
+            .filter(message => message.role !== 'system')
+            .map((message, index) => (
+              <div key={index} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`max-w-[80%] rounded-2xl px-4 py-2 ${
+                    message.role === "user"
+                      ? "bg-purple-600 text-white rounded-br-none"
+                      : "bg-gray-100 text-gray-800 rounded-bl-none"
+                  }`}
+                >
+                  <ReactMarkdown
+                    components={{
+                      // Existing components...
+                      p: ({children}) => <p className="mb-2">{children}</p>,
+                      ul: ({children}) => <ul className="list-disc ml-4 mb-2">{children}</ul>,
+                      ol: ({children}) => <ol className="list-decimal ml-4 mb-2">{children}</ol>,
+                      li: ({children}) => <li className="mb-1">{children}</li>,
+                      h1: ({children}) => <h1 className="text-xl font-bold mb-2">{children}</h1>,
+                      h2: ({children}) => <h2 className="text-lg font-bold mb-2">{children}</h2>,
+                      strong: ({children}) => <strong className="font-bold">{children}</strong>,
+                      em: ({children}) => <em className="italic">{children}</em>,
+                      // Add link handling
+                      a: ({href, children}) => (
+                        <a 
+                          href={href} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          className="text-purple-600 hover:text-purple-800 underline"
+                        >
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  >
+                    {message.content}
+                  </ReactMarkdown>
+                </div>
               </div>
-            </div>
           ))}
           {isLoading && (
             <div className="flex justify-start">
