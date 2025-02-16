@@ -1,8 +1,13 @@
 # Standard library imports
+import asyncio
 import base64
 import json
 import os
+import struct
+import subprocess
+import wave
 from datetime import datetime
+from io import BytesIO
 from typing import Dict, List
 
 # Third party imports
@@ -17,7 +22,7 @@ from deepgram import (
     FileSource,
 )
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query, Depends
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException, Query, Depends, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from google.generativeai import GenerativeModel
 from PIL import Image
@@ -48,55 +53,177 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+### Audio and Video Streaming
 
-# Get all visits
-@app.get("/visits")
-def get_visits():
-    visits = (
-        supabase.table("visit")
-        .select("id, patient(first_name), created_at")
-        .order("created_at", desc=True)
-        .execute()
-    )
-    print("visits", visits)
-    return visits.data
+SAMPLE_RATE = 16000
+CHANNELS = 1
+SAMPLE_WIDTH = 2  # 16-bit audio
+
+audio_buffer = BytesIO()  # will hold a valid WAV-file stream
+video_buffer = BytesIO()  # will hold raw video packets (e.g. h264)
+wav_file = wave.open(audio_buffer, "wb")
+wav_file.setnchannels(CHANNELS)
+wav_file.setsampwidth(SAMPLE_WIDTH)
+wav_file.setframerate(SAMPLE_RATE)
+
+buffer_lock = asyncio.Lock()
+
+HEADER_FORMAT = "!B"  # 1 byte for type,
+HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
 
-# Get visit for patient by id
-@app.get("/visits/{id}")
-def get_visit_by_id(id: int):
-    visits = (
-        supabase.table("visit")
-        .select(
-            "id, patient(mrn, first_name, last_name, age, gender), doctor(first_name, last_name), created_at, hpi, pmh, cc, meds, allergies, ros, vitals, findings, diagnosis, plan, interventions, eval, discharge, approved"
-        )
-        .eq("id", id)
-        .execute()
-    )
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    global wav_file, audio_buffer, video_buffer
+    await websocket.accept()
+    print("WebSocket connection established.")
+    try:
+        while True:
+            header = await websocket.receive_bytes()
 
-    visit_data = visits.data[0]
+            # Read the header to see if it's 0x01 (audio) or 0x02 (video)
+            packet_type = struct.unpack(HEADER_FORMAT, header)
 
-    # Flatten the patient and doctor info into the visit data
-    visit_data["patient_first_name"] = visit_data["patient"]["first_name"]
-    visit_data["patient_last_name"] = visit_data["patient"]["last_name"]
-    visit_data["patient_age"] = visit_data["patient"]["age"]
-    visit_data["patient_gender"] = visit_data["patient"]["gender"]
-    visit_data["patient_mrn"] = visit_data["patient"]["mrn"]
-    visit_data["doctor_first_name"] = visit_data["doctor"]["first_name"]
-    visit_data["doctor_last_name"] = visit_data["doctor"]["last_name"]
+            data = await websocket.receive_bytes()
+            async with buffer_lock:
+                if packet_type[0] == 0x01:
+                    wav_file.writeframes(data)
+                else:
+                    video_buffer.write(data)
 
-    return visit_data
+    except Exception as e:
+        print(f"WebSocket connection error: {e}")
+    finally:
+        # On disconnect, close the open WAV file resource.
+        async with buffer_lock:
+            try:
+                wav_file.close()
+            except Exception:
+                pass
+        print("WebSocket connection closed.")
+
+
+@app.get("/badge-scan/{badge}")
+async def badge_scan(badge: int):
+    global audio_buffer, video_buffer, wav_file, expecting_audio
+    # Get a timestamp – used for filenames
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    # First, atomically capture and reset our buffers.
+    async with buffer_lock:
+        # Finalize the currently open WAV file (which finalizes the header)
+        try:
+            wav_file.close()
+        except Exception:
+            pass
+        # Capture the bytes recorded up to this point
+        old_audio_bytes = audio_buffer.getvalue()
+        old_video_bytes = video_buffer.getvalue()
+
+        # Reset buffers for future data
+        audio_buffer = BytesIO()
+        video_buffer = BytesIO()
+        expecting_audio = False  # restart packet alternation
+
+        # Reinitialize the WAV writer for the new audio buffer.
+        wav_file = wave.open(audio_buffer, "wb")
+        wav_file.setnchannels(CHANNELS)
+        wav_file.setsampwidth(SAMPLE_WIDTH)
+        wav_file.setframerate(SAMPLE_RATE)
+
+    # Write the captured buffers out to temporary files.
+    audio_temp = f"audio_{ts}.wav"
+    video_temp = f"video_{ts}.h264"  # assuming the video data is in H.264 format
+
+    with open(audio_temp, "wb") as af:
+        af.write(old_audio_bytes)
+    with open(video_temp, "wb") as vf:
+        vf.write(old_video_bytes)
+
+    # Define the name of the output MP4 file.
+    output_filename = f"output_{ts}.mp4"
+
+    # Build and run the ffmpeg command.
+    # Here we assume that:
+    # -  The video data is already encoded and can be 'copied' into an MP4 container.
+    # -  The audio from the WAV file will be encoded as AAC.
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_temp,  # video input
+        "-i",
+        audio_temp,  # audio input
+        "-c:v",
+        "copy",  # copy the video stream without re-encoding
+        "-c:a",
+        "aac",  # encode audio as AAC
+        output_filename,
+    ]
+
+    try:
+        subprocess.run(ffmpeg_cmd, check=True)
+        print(f"MP4 file created: {output_filename}")
+    except subprocess.CalledProcessError as e:
+        print(f"Error during ffmpeg execution: {e}")
+        return {"error": "Failed to generate MP4 file."}
+
+    # Clean up the temporary files.
+    """try:
+        os.remove(audio_temp)
+        os.remove(video_temp)
+    except Exception as cleanup_error:
+        print(f"Cleanup error: {cleanup_error}")"""
+
+    return {"badge": badge, "output_file": output_filename, "timestamp": ts}
 
 
 # Approve visit record by id
-@app.put("/visits/{visit_id}")
-def approve_visit(visit_id: int):
+@app.post("/visits")
+def approve_visit(
+    visit_id: int = Form(...),
+    patient_first_name: str = Form(...),
+    patient_last_name: str = Form(...),
+    patient_age: int = Form(...),
+    patient_gender: str = Form(...),
+    patient_mrn: int = Form(...),
+    cc: str = Form(...),
+    hpi: str = Form(...),
+    pmh: str = Form(...),
+    meds: str = Form(...),
+    allergies: str = Form(...),
+    ros: str = Form(...),
+    vitals: str = Form(...),
+    findings: str = Form(...),
+    diagnosis: str = Form(...),
+    plan: str = Form(...),
+    interventions: str = Form(...),
+    eval: str = Form(...),
+    discharge: str = Form(...),
+):
     visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
     print("visit", visit)
     if visit.data[0]["approved"] is False:
         updated_visit = (
             supabase.table("visit")
-            .update({"approved": True})
+            .update(
+                {
+                    "approved": True,
+                    "cc": cc,
+                    "hpi": hpi,
+                    "pmh": pmh,
+                    "meds": meds,
+                    "allergies": allergies,
+                    "ros": ros,
+                    "vitals": vitals,
+                    "findings": findings,
+                    "diagnosis": diagnosis,
+                    "plan": plan,
+                    "interventions": interventions,
+                    "eval": eval,
+                    "discharge": discharge,
+                }
+            )
             .eq("id", visit_id)
             .execute()
         )
@@ -154,10 +281,19 @@ async def upload_audio(
         except Exception as e:
             print(f"LLM processing error: {e}")
             structured_data = {
-                "cc": "", "hpi": "", "pmh": "", "meds": "",
-                "allergies": "", "ros": "", "vitals": "",
-                "findings": "", "diagnosis": "", "plan": "",
-                "interventions": "", "eval": "", "discharge": ""
+                "cc": "",
+                "hpi": "",
+                "pmh": "",
+                "meds": "",
+                "allergies": "",
+                "ros": "",
+                "vitals": "",
+                "findings": "",
+                "diagnosis": "",
+                "plan": "",
+                "interventions": "",
+                "eval": "",
+                "discharge": "",
             }
 
         # Save to database
@@ -179,9 +315,9 @@ async def upload_audio(
     except Exception as e:
         print(f"Error in upload_audio: {e}")
         raise HTTPException(
-            status_code=500,
-            detail=f"Error processing audio upload: {str(e)}"
+            status_code=500, detail=f"Error processing audio upload: {str(e)}"
         )
+
 
 # Create endpoint for processing text
 @app.post("/process-medical-text")
@@ -223,15 +359,38 @@ def process_video(video_path: str):
     # Process video here
     return {"message": "Video processed"}
 
+
+## Patient Portal
+@app.get("/patient-visits/{patient_id}")
+def get_patient_visits(patient_id: int):
+    visits = (
+        supabase.table("visit")
+        .select("id, doctor(first_name, last_name, location), created_at, type")
+        .eq("patient", patient_id)
+        .eq("approved", True)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return visits.data
+
+
+@app.get("/patient/{patient_mrn}")
+def get_patient(patient_mrn: int):
+    patient = (
+        supabase.table("patient")
+        .select("mrn, first_name, last_name, age, gender")
+        .eq("mrn", patient_mrn)
+        .execute()
+    )
+    return patient.data[0]
+
+
 def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
     """
     Use Mistral AI to parse combined audio and video information into structured fields
     """
     api_key = os.getenv("MISTRAL_API_KEY")
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
 
     prompt = f"""You are an expert medical doctor with extensive experience in clinical documentation and EHR systems. 
     Your task is to analyze both the transcribed consultation and visual assessment data to create a comprehensive medical record.
@@ -286,28 +445,39 @@ def parse_medical_text(raw_text: str, visual_assessment: str) -> Dict:
                 "response_format": {"type": "json_object"}
             }
         )
-        
+
         if response.status_code != 200:
             raise Exception(f"API call failed with status code: {response.status_code}")
-            
+
         result = response.json()
-        parsed_content = json.loads(result['choices'][0]['message']['content'])
+        parsed_content = json.loads(result["choices"][0]["message"]["content"])
         return parsed_content
 
     except Exception as e:
         print(f"Error in LLM processing: {e}")
         raise
 
+
 def validate_structured_data(data: Dict) -> bool:
     """
     Validates that all required fields are present in the structured data
     """
     required_fields = [
-        "cc", "hpi", "pmh", "meds", "allergies", "ros",
-        "vitals", "findings", "diagnosis", "plan",
-        "interventions", "eval", "discharge"
+        "cc",
+        "hpi",
+        "pmh",
+        "meds",
+        "allergies",
+        "ros",
+        "vitals",
+        "findings",
+        "diagnosis",
+        "plan",
+        "interventions",
+        "eval",
+        "discharge",
     ]
-    
+
     return all(field in data for field in required_fields)
 
 def extract_frames(video_path: str, max_frames: int = 20):
@@ -444,3 +614,75 @@ async def generate_visit_questions(visit_data: dict) -> List[str]:
     except Exception as e:
         print(f"Error generating questions: {e}")
         return []
+
+
+def process_video(video_path: str):
+    print("Processing video", video_path)
+    # Process video here
+    return {"message": "Video processed"}
+
+
+### Doctor Portal Endpoints
+
+
+# Get all visits
+@app.get("/visits")
+def get_visits():
+    visits = (
+        supabase.table("visit")
+        .select("id, patient(first_name), created_at")
+        .order("created_at", desc=True)
+        .execute()
+    )
+    print("visits", visits)
+    return visits.data
+
+
+# Get visit for patient by id
+@app.get("/visits/{id}")
+def get_visit_by_id(id: int):
+    visits = (
+        supabase.table("visit")
+        .select(
+            "id, patient(mrn, first_name, last_name, age, gender), doctor(first_name, last_name), created_at, hpi, pmh, cc, meds, allergies, ros, vitals, findings, diagnosis, plan, interventions, eval, discharge, approved"
+        )
+        .eq("id", id)
+        .execute()
+    )
+
+    visit_data = visits.data[0]
+
+    # Flatten the patient and doctor info into the visit data
+    visit_data["patient_first_name"] = visit_data["patient"]["first_name"]
+    visit_data["patient_last_name"] = visit_data["patient"]["last_name"]
+    visit_data["patient_age"] = visit_data["patient"]["age"]
+    visit_data["patient_gender"] = visit_data["patient"]["gender"]
+    visit_data["patient_mrn"] = visit_data["patient"]["mrn"]
+    visit_data["doctor_first_name"] = visit_data["doctor"]["first_name"]
+    visit_data["doctor_last_name"] = visit_data["doctor"]["last_name"]
+
+    return visit_data
+
+
+### Patient Portal Endpoints
+@app.get("/patient-visits")
+def get_patient_visits(patient_id: int):
+    visits = (
+        supabase.table("visit")
+        .select("id, doctor(first_name, last_name), created_at")
+        .eq("patient", patient_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return visits.data
+
+
+@app.get("/patient/{patient_mrn}")
+def get_patient(patient_mrn: int):
+    patient = (
+        supabase.table("patient")
+        .select("mrn, first_name, last_name, age, gender")
+        .eq("mrn", patient_mrn)
+        .execute()
+    )
+    return patient.data[0]
