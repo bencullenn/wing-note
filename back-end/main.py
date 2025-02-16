@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException,
+from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 import os
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -237,11 +237,11 @@ def process_video(video_path: str):
 
 
 ## Patient Portal
-@app.get("/patient-visits")
+@app.get("/patient-visits/{patient_id}")
 def get_patient_visits(patient_id: int):
     visits = (
         supabase.table("visit")
-        .select("id, doctor(first_name, last_name), created_at")
+        .select("id, doctor(first_name, last_name, location), created_at, type")
         .eq("patient", patient_id)
         .order("created_at", desc=True)
         .execute()
