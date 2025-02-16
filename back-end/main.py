@@ -10,6 +10,7 @@ from datetime import datetime
 from io import BytesIO
 from typing import Dict, List
 
+
 # Third party imports
 import cv2
 import google.generativeai as genai
@@ -17,9 +18,7 @@ import numpy as np
 import requests
 from deepgram import (
     DeepgramClient,
-    DeepgramClientOptions,
     PrerecordedOptions,
-    FileSource,
 )
 from dotenv import load_dotenv
 from fastapi import (
@@ -134,7 +133,7 @@ async def upload_audio(file: UploadFile = File(...)):
 
     # get the timestamp
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    audio_file_path = "audio" + ts + ".dat"
+    audio_file_path = "audio" + ts + ".m4a"
 
     # Create WAV file with proper audio settings
     with wave.open(audio_file_path, "w") as wav_file:
@@ -257,18 +256,24 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
         wav_file.setframerate(SAMPLE_RATE)"""
 
     # Read and merge all the audio files together
-    audio_data = []
-    for audio_file_path in audio_file_paths:
-        with open(audio_file_path, "rb") as f:
-            audio_data.append(f.read())
+    dat_files = False
+    audio_file_path = ""
 
-    audio_data = b"".join(audio_data)
+    if dat_files is True:
+        audio_data = []
+        for audio_file_path in audio_file_paths:
+            with open(audio_file_path, "rb") as f:
+                audio_data.append(f.read())
 
-    # Save the audio to Supabase
-    audio_file_path = "audio" + ts
-    supabase.storage.from_("audio").upload(
-        audio_file_path, audio_data, file_options={"content-type": "audio/wav"}
-    )
+        audio_data = b"".join(audio_data)
+
+        # Save the audio to Supabase
+        audio_file_path = "audio" + ts + ".m4a"
+        supabase.storage.from_("audio").upload(
+            audio_file_path, audio_data, file_options={"content-type": "audio/m4a"}
+        )
+    else:
+        audio_file_path = "tree_hacks_script.m4a"  # audio_file_paths[0]
 
     # Get the file from supabase
     audio_url = supabase.storage.from_("audio").create_signed_url(audio_file_path, 300)[
@@ -295,7 +300,7 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
         transcription.results.channels[0].alternatives[0].paragraphs.transcript
     )
 
-    """# Read and merge all the video files together
+    # Read and merge all the video files together
     video_data = []
     for video_file_path in video_file_paths:
         with open(video_file_path, "rb") as f:
@@ -315,8 +320,7 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
 
     # Get visual assessment
     visual_result = await process_video(video_url)
-    visual_assessment = visual_result["visual_assessment"]"""
-    visual_assessment = "No visual assessment available"
+    visual_assessment = visual_result["visual_assessment"]
 
     # Process combined information
     try:

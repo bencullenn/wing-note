@@ -3,3 +3,5 @@
 /back-end/.env
 /back-end/*.wav
 /back-end/*.aif
+/back-end/*.m4a
+/back-end/*.dat
