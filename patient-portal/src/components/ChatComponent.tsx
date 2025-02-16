@@ -35,7 +35,7 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
   
   useEffect(() => {
     setUpChat();
-  }, [])
+  }, [context, visitId])
 
   const updateMessages = (messages: Message[]) => {
     setMessages(messages);
@@ -43,11 +43,45 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
 
   const fetchQuestions = async () => {
     try {
-      const response = await fetch(API_URL + `/generate-questions`);
-      const data = await response.json()
-      setSuggestedQuestions(data.questions)
+      if (context === 'general') {
+        // Default questions for general context
+        setSuggestedQuestions([
+          "Can you summarize my recent visits?",
+          "What vaccinations do I need?",
+          "How can I access my medical records?",
+          "What preventive screenings are recommended?"
+        ]);
+        return;
+      }
+
+      // Only make API call for visit-specific context
+      const endpoint = `${API_URL}/generate-questions/${visitId}`;
+      console.log('Fetching questions from:', endpoint);
+      
+      const response = await fetch(endpoint);
+      const data = await response.json();
+      
+      console.log('Received questions:', data);
+      
+      if (data.questions && Array.isArray(data.questions)) {
+        setSuggestedQuestions(data.questions);
+      } else {
+        console.error('Invalid questions format:', data);
+        setSuggestedQuestions([
+          "What does my diagnosis mean?",
+          "How should I take my medications?",
+          "When should I schedule follow-up?",
+          "What symptoms need immediate attention?"
+        ]);
+      }
     } catch (error) {
-      console.error('Error fetching questions:', error)
+      console.error('Error fetching questions:', error);
+      setSuggestedQuestions([
+        "What does my diagnosis mean?",
+        "How should I take my medications?",
+        "When should I schedule follow-up?",
+        "What symptoms need immediate attention?"
+      ]);
     }
   }
 
@@ -141,24 +175,22 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
   return (
     <Card className="flex flex-col h-full">
       <CardContent className="flex flex-col h-full p-4">
-        {/* Suggested Questions */}
-        {visitId && (
-          <div className="mb-4">
-            <h3 className="text-lg font-semibold mb-2">{('suggested_questions')}</h3>
-            <div className="flex flex-wrap gap-2">
-              {suggestedQuestions.map((question, index) => (
-                <button
-                  key={index}
-                  type="button"
-                  className="bg-purple-100 hover:bg-purple-200 px-3 py-1 rounded-full text-sm"
-                  onClick={() => setInput(question)}
-                >
-                  {question}
-                </button>
-              ))}
-            </div>
+        {/* Suggested Questions - Show for both contexts */}
+        <div className="mb-4">
+          <h3 className="text-lg font-semibold mb-2">Suggested Questions</h3>
+          <div className="flex flex-wrap gap-2">
+            {suggestedQuestions.map((question, index) => (
+              <button
+                key={index}
+                type="button"
+                className="bg-purple-100 hover:bg-purple-200 px-3 py-1 rounded-full text-sm"
+                onClick={() => setInput(question)}
+              >
+                {question}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
 
         {/* Chat Messages */}
         <div className="flex-grow overflow-y-auto mb-4 space-y-4">
@@ -216,7 +248,7 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={('ask_question')}
+            placeholder="Ask a question..."
             className="flex-grow"
           />
           <Button type="submit" className="bg-purple-600 hover:bg-purple-700" disabled={isLoading}>

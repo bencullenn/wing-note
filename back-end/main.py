@@ -604,56 +604,86 @@ async def process_video(video_link: str) -> Dict:
         return {"status": "error", "error": str(e)}
 
 
-@app.get("/generate-questions")
-async def generate_visit_questions(visit_data: dict) -> List[str]:
-    """Generate relevant questions based on visit data using Perplexity API"""
+@app.get("/generate-questions/{visit_id}")
+async def generate_visit_questions(visit_id: int) -> Dict[str, List[str]]:
+    """
+    Generate relevant questions based on visit data using Mistral API
+    """
+    visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
+    visit_data = visit.data[0]
+    print("visit_data", visit_data)
 
-    api_key = os.getenv("PERPLEXITY_API_KEY")
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    mistral_api_key = os.getenv("MISTRAL_API_KEY")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {mistral_api_key}",
+    }
 
-    prompt = f"""As a medical AI assistant, generate 4 relevant and important questions that a patient might ask 
-    based on this medical visit information:
+    prompt = f"""As a medical AI assistant, generate 4 brief but relevant and specific questions based on this visit:
     
     Chief Complaint: {visit_data.get("cc", "")}
     Diagnosis: {visit_data.get("diagnosis", "")}
     Treatment Plan: {visit_data.get("plan", "")}
     Medications: {visit_data.get("meds", "")}
     
-    Generate questions that:
-    1. Focus on understanding the diagnosis
-    2. Address treatment plans and medications
-    3. Cover potential side effects or complications
+    Generate 4 brief questions that:
+    1. Focus on understanding the diagnosis in simple terms
+    2. Address treatment plans and medications clearly
+    3. Cover potential side effects or complications to watch for
     4. Include follow-up care instructions
+
+    Rules for questions:
+    1. Keep each question under 8 words
+    2. Focus on the specific diagnosis and treatment
+    3. Use everyday language, no medical jargon
+    4. Make them actionable and practical
     
-    Return exactly 4 clear, patient-friendly questions."""
+    Return ONLY a JSON object in this exact format:
+    {{
+        "questions": [
+            "question1",
+            "question2",
+            "question3",
+            "question4"
+        ]
+    }}"""
 
     try:
         response = requests.post(
-            "https://api.perplexity.ai/chat/completions",
+            "https://api.mistral.ai/v1/chat/completions",
             headers=headers,
             json={
-                "model": "pplx-7b-online",
+                "model": "mistral-large-latest",
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a helpful medical assistant generating patient questions.",
+                        "content": "You are a medical assistant creating concise, practical questions. Always return JSON objects.",
                     },
                     {"role": "user", "content": prompt},
                 ],
+                "temperature": 0.2,
+                "response_format": {"type": "json_object"},
             },
         )
 
         if response.status_code == 200:
-            questions = response.json()["choices"][0]["message"]["content"].split("\n")
-            # Clean and filter questions
-            questions = [q.strip().strip("1234. ") for q in questions if q.strip()]
-            return questions[:4]  # Ensure we return exactly 4 questions
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+            # Ensure we're returning a dictionary with questions key
+            return {"questions": json.loads(content)["questions"][:4]}
         else:
             raise Exception(f"API call failed with status {response.status_code}")
 
     except Exception as e:
         print(f"Error generating questions: {e}")
-        return []
+        return {
+            "questions": [
+                "How long will recovery take?",
+                "What symptoms should worry me?",
+                "When do I need follow-up?",
+                "Any diet restrictions to follow?"
+            ]
+        }  # Return fallback questions in correct format
 
 
 ### Doctor Portal Endpoints
@@ -712,29 +742,57 @@ def get_visit_summary(id: int):
     if not visits.data:
         raise HTTPException(status_code=404, detail="Visit not found")
 
-    # Use mixtral to generate a summary of the visit
     visit_data = visits.data[0]
-    prompt = f"""You are a medical professional reviewing a patient visit record. 
-    Summarize the key information from the visit into a concise and informative report.
-    Make sure to explain any medical terms and provide context for the patient's condition.
+    prompt = f"""You are a medical professional translating a visit record into patient-friendly language. 
+    Create a clear, reassuring summary that speaks directly to the patient using simple terms and helpful explanations.
+    Format the response in markdown for better readability.
 
+    Using this visit information:
     Patient: {visit_data["patient"]["first_name"]} {visit_data["patient"]["last_name"]} (MRN: {visit_data["patient"]["mrn"]})
     Doctor: {visit_data["doctor"]["first_name"]} {visit_data["doctor"]["last_name"]}
     Date: {visit_data["created_at"]}
+    
+    Create a summary following this structure:
 
-    Chief Complaint: {visit_data.get("cc", "")}
-    History of Present Illness: {visit_data.get("hpi", "")}
-    Past Medical History: {visit_data.get("pmh", "")}
-    Current Medications: {visit_data.get("meds", "")}
-    Allergies: {visit_data.get("allergies", "")}
-    Review of Systems: {visit_data.get("ros", "")}
-    Vitals: {visit_data.get("vitals", "")}
-    Physical Examination Findings: {visit_data.get("findings", "")}
-    Diagnosis: {visit_data.get("diagnosis", "")}
-    Plan: {visit_data.get("plan", "")}
-    Interventions: {visit_data.get("interventions", "")}
-    Evaluation: {visit_data.get("eval", "")}
-    Discharge Instructions: {visit_data.get("discharge", "")}
+    # Summary of Visit with Dr. {visit_data["doctor"]["last_name"]}
+
+    ### When you visited
+    {visit_data["created_at"]}
+
+    ### Your main concern
+    [Explain {visit_data.get("cc", "")} in simple terms]
+
+    ### What you told Dr. {visit_data["doctor"]["last_name"]}
+    [Summarize {visit_data.get("hpi", "")} in everyday language]
+
+    ### What We Found
+    **Key findings:** [Explain {visit_data.get("findings", "")} and vital signs in simple terms]
+
+    **Our understanding:** [Translate {visit_data.get("diagnosis", "")} into patient-friendly language]
+
+    ### Your Treatment Plan
+    **To manage your symptoms:**
+    [Break down {visit_data.get("plan", "")} into clear steps]
+
+    **How to do it:**
+    [Explain any procedures {visit_data.get("interventions", "")} as simple steps]
+
+    **When to use it:**
+    [Provide clear guidance on timing and frequency]
+
+    ### Next Steps
+    **Follow-up care:**
+    - [Convert {visit_data.get("discharge", "")} into clear bullet points]
+    - [Add any lifestyle recommendations]
+    - [Include warning signs to watch for]
+
+    Important notes:
+    - Add extra line breaks between sections for better readability
+    - Use bold text for important points
+    - Keep paragraphs short (2-3 lines maximum)
+    - Explain medical terms in parentheses
+    - Use bullet points for lists
+    - Maintain a warm, reassuring tone
     """
 
     try:
@@ -762,9 +820,7 @@ def get_visit_summary(id: int):
             raise Exception(f"API call failed with status code: {response.status_code}")
 
         result = response.json()
-        print("REsult", result)
         summary = result["choices"][0]["message"]["content"]
-        print("Summary", summary)
         return summary
 
     except Exception as e:
