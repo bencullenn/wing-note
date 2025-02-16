@@ -403,7 +403,7 @@ async def chat(messages: List[Dict]):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/chat-context")
+@app.get("/chat-context/{visit_id}")
 async def chat_context(visit_id: int):
     visit = supabase.table("visit").select("*").eq("id", visit_id).execute()
     return visit.data[0]
@@ -605,7 +605,7 @@ async def process_video(video_link: str) -> Dict:
 
 
 @app.get("/generate-questions/{visit_id}")
-async def generate_visit_questions(visit_id: int) -> Dict[str, List[str]]:
+async def generate_visit_questions(visit_id: int) -> List[str]: 
     """
     Generate relevant questions based on visit data using Mistral API
     """
@@ -657,33 +657,30 @@ async def generate_visit_questions(visit_id: int) -> Dict[str, List[str]]:
                 "messages": [
                     {
                         "role": "system",
-                        "content": "You are a medical assistant creating concise, practical questions. Always return JSON objects.",
+                        "content": "You are an empathetic medical assistant helping patients understand their care.",
                     },
                     {"role": "user", "content": prompt},
                 ],
-                "temperature": 0.2,
+                "temperature": 0.3,
                 "response_format": {"type": "json_object"},
             },
         )
 
         if response.status_code == 200:
             result = response.json()
-            content = result["choices"][0]["message"]["content"]
-            # Ensure we're returning a dictionary with questions key
-            return {"questions": json.loads(content)["questions"][:4]}
+            questions = json.loads(result["choices"][0]["message"]["content"])["questions"]
+            return questions[:4]  # Ensure we return exactly 4 questions
         else:
             raise Exception(f"API call failed with status {response.status_code}")
 
     except Exception as e:
         print(f"Error generating questions: {e}")
-        return {
-            "questions": [
-                "How long will recovery take?",
-                "What symptoms should worry me?",
-                "When do I need follow-up?",
-                "Any diet restrictions to follow?"
-            ]
-        }  # Return fallback questions in correct format
+        return [
+            "Can you explain my diagnosis in simpler terms?",
+            "What should I expect from the treatment plan?",
+            "Are there any side effects I should watch out for?",
+            "When should I schedule a follow-up appointment?"
+        ]  # Fallback questions
 
 
 ### Doctor Portal Endpoints
@@ -694,7 +691,7 @@ async def generate_visit_questions(visit_id: int) -> Dict[str, List[str]]:
 def get_visits():
     visits = (
         supabase.table("visit")
-        .select("id, patient(first_name, last_name), created_at, approved")
+        .select("id, patient(first_name, last_name, language), created_at, approved")
         .order("created_at", desc=True)
         .execute()
     )
@@ -733,7 +730,7 @@ def get_visit_summary(id: int):
     visits = (
         supabase.table("visit")
         .select(
-            "id, patient(mrn, first_name, last_name, age, gender), doctor(first_name, last_name), created_at, hpi, pmh, cc, meds, allergies, ros, vitals, findings, diagnosis, plan, interventions, eval, discharge, approved"
+            "id, patient(mrn, first_name, last_name, age, gender, language), doctor(first_name, last_name), created_at, hpi, pmh, cc, meds, allergies, ros, vitals, findings, diagnosis, plan, interventions, eval, discharge, approved"
         )
         .eq("id", id)
         .execute()
@@ -744,6 +741,7 @@ def get_visit_summary(id: int):
 
     visit_data = visits.data[0]
     prompt = f"""You are a medical professional translating a visit record into patient-friendly language. 
+    Write the entire response in {visit_data["patient"]["language"]} language.
     Create a clear, reassuring summary that speaks directly to the patient using simple terms and helpful explanations.
     Format the response in markdown for better readability.
 

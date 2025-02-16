@@ -30,6 +30,7 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
     console.log("setUpChat")
     fetchQuestions();
     const contextString = await getContextString();
+    console.log("contextString", contextString)
     setSystemPrompt(contextString);
   }
   
@@ -63,8 +64,8 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
       
       console.log('Received questions:', data);
       
-      if (data.questions && Array.isArray(data.questions)) {
-        setSuggestedQuestions(data.questions);
+      if (data && Array.isArray(data)) {
+        setSuggestedQuestions(data);
       } else {
         console.error('Invalid questions format:', data);
         setSuggestedQuestions([
@@ -86,14 +87,14 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
   }
 
   const getContextString = async () => {
-    if (context === 'general') {
-      return `General medical chat about all your visits and medical history`;
-    } else if (context === 'visit' && visitId) {
+    console.log("context", context)
+    console.log("visitId", visitId)
+    if (context === 'visit' && visitId) {
       const response = await fetch(API_URL + `/chat-context/${visitId}`);
       const data = await response.json();
-      return data.context;
+      return data.raw_text;
     }
-    return '';
+    return `General medical chat about all your visits and medical history`;
   };
 
   const setSystemPrompt = (context: string) => {
@@ -135,6 +136,7 @@ export function ChatComponent({ context, visitId }: ChatComponentProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
+    console.log("message update?", messages)
   
     const userMessage = { 
       role: 'user', 
