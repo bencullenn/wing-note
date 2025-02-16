@@ -226,7 +226,7 @@ async def upload(badge_id: str = Path(..., regex="^[0-9a-fA-F]+$")):
 
     patient_id = (
         supabase.table("patient")
-        .select("id")
+        .select("mrn")
         .eq("wristband_id", badge_id)
         .execute()
         .data[0]["id"]
@@ -719,7 +719,7 @@ async def process_video(video_link: str) -> Dict:
 
 
 @app.get("/generate-questions/{visit_id}")
-async def generate_visit_questions(visit_id: int) -> List[str]: 
+async def generate_visit_questions(visit_id: int) -> List[str]:
     """
     Generate relevant questions based on visit data using Mistral API
     """
@@ -782,7 +782,9 @@ async def generate_visit_questions(visit_id: int) -> List[str]:
 
         if response.status_code == 200:
             result = response.json()
-            questions = json.loads(result["choices"][0]["message"]["content"])["questions"]
+            questions = json.loads(result["choices"][0]["message"]["content"])[
+                "questions"
+            ]
             return questions[:4]  # Ensure we return exactly 4 questions
         else:
             raise Exception(f"API call failed with status {response.status_code}")
@@ -793,7 +795,7 @@ async def generate_visit_questions(visit_id: int) -> List[str]:
             "Can you explain my diagnosis in simpler terms?",
             "What should I expect from the treatment plan?",
             "Are there any side effects I should watch out for?",
-            "When should I schedule a follow-up appointment?"
+            "When should I schedule a follow-up appointment?",
         ]  # Fallback questions
 
 
